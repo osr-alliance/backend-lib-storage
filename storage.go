@@ -9,6 +9,11 @@ import (
 	"github.com/jmoiron/sqlx"
 )
 
+/*
+TODO:
+- No fetching list
+- Cache is deleted multiple times on tx.intsert & tx.commit
+*/
 // Interface defines our API for this package
 type Storage interface {
 	// TXBegin starts a transaction
@@ -22,12 +27,20 @@ type Storage interface {
 
 	Insert(ctx context.Context, obj interface{}) error
 	Update(ctx context.Context, obj interface{}) error
-	Select(ctx context.Context, obj interface{}, key int32) error
+	Select(ctx context.Context, obj interface{}, key int32) error // Select fills out the obj for its response
+
+	/*
+		SelectAll fills out the objs as the response
+		Note: you could actually take the key and find the struct, make it a slice of structs, etc but that's actually not the most
+		developer-friendly way because then you'd have to type-cast and check the objs being returned. Much easier to do it this
+		way from a developer's standpoint
+	*/
+	SelectAll(ctx context.Context, obj interface{}, objs interface{}, key int32) error
 
 	DeleteKeys(ctx context.Context, objs ...interface{}) error // Deletes the object's keys from the cache
 
 	// clear's out all of this service's stuff such as during a migration
-	Clear(ctx context.Context) error
+	Clear(ctx context.Context, serviceName string) error
 }
 
 // storage is the private implements the API
@@ -101,30 +114,76 @@ func (s *storage) TXInsert(ctx context.Context, tx *sqlx.Tx, obj interface{}) er
 }
 
 func (s *storage) TXUpdate(ctx context.Context, tx *sqlx.Tx, obj interface{}) error {
-	return nil
+	return s.update(ctx, obj, tx)
 }
 
 func (s *storage) TXEnd(ctx context.Context, tx *sqlx.Tx, obj ...interface{}) error {
-
 	return tx.Commit()
 }
 
 func (s *storage) Update(ctx context.Context, obj interface{}) error {
+	s.update(ctx, obj, s.writeConn)
 	return nil
 }
 
 func (s *storage) Insert(ctx context.Context, obj interface{}) error {
-	err := s.insert(ctx, obj, s.writeConn)
-	if err != nil {
+	return s.insert(ctx, obj, s.writeConn)
+}
+
+func (s *storage) Select(ctx context.Context, obj interface{}, key int32) error {
+	k, ok := s.keys[key]
+	if !ok {
+		return errors.New("config key not found; have you configured storage properly?")
+	}
+
+	// get the cache key namme
+	keyName := k.getKeyName(obj)
+	fmt.Println("keyName: ", keyName)
+
+	// get the cache value
+	// the obj should be of the value that the cache is expecting so we can then just unmarshal into that
+	err := s.cache.get(ctx, keyName, obj)
+	if err == nil {
+		// we found the value in the cache
+		fmt.Println("found in cache; returning")
+		// object should already be set in the obj
+		return nil
+	}
+
+	// check to see if there's a real error
+	if err != nil && err != redis.Nil {
+		fmt.Println("cache get error: ", err)
 		return err
 	}
 
-	s.delete(ctx, obj)
+	// we have an err and it's a redis.Nil which means the value wasn't found in the cache
+	// let's get from the database and then set the cache
+	err = s.query(ctx, obj, k)
+	if err != nil {
+		fmt.Println("err in setting the value: ", err)
+		return err
+	}
+
+	// TODO: if key.CacheDataStructure == CacheDataStructureList then we need to get the actual values & not just the IDs
 
 	return nil
 }
 
-func (s *storage) Get(ctx context.Context, obj interface{}, key int32) error {
+func (s *storage) Clear(ctx context.Context, serviceName string) error {
+	return nil
+}
+
+func (s *storage) DeleteKeys(ctx context.Context, objs ...interface{}) error {
+	for _, obj := range objs {
+		err := s.action(obj, CacheDel)
+		if err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (s *storage) SelectAll(ctx context.Context, obj interface{}, objs interface{}, key int32) error {
 	fmt.Printf("insertKeys: %+v\nkeys: %+v\n", s.insertKeys, s.keys)
 
 	k, ok := s.keys[key]
@@ -154,7 +213,7 @@ func (s *storage) Get(ctx context.Context, obj interface{}, key int32) error {
 
 	// we have an err and it's a redis.Nil which means the value wasn't found in the cache
 	// let's get from the database and then set the cache
-	err = s.get(ctx, obj, k)
+	err = s.query(ctx, obj, k)
 	if err != nil {
 		fmt.Println("err in setting the value: ", err)
 		return err

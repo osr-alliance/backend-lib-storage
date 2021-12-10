@@ -40,9 +40,10 @@ type Key struct {
 
 	InsertAction CacheAction // action to take on this key when an insert happens to the key this struct is attached to e.g. Del, LPush, etc
 	UpdateAction CacheAction // action to take on this key when an update happens to the key this struct is attached to e.g. Del, LPush, etc
-	SetAction    CacheAction // action to take on this key when a set happens to the key this struct is attached to (most likely CacheSet)
+	SelectAction CacheAction // action to take on this key when a set happens to the key this struct is attached to (most likely CacheSet)
 }
 
+// getKeyName takes a cache's abstract key, e.g. `service:lead|LeadID:%v` and returns the key name e.g. `service:lead|LeadID:1273`
 func (k *Key) getKeyName(obj interface{}) string {
 	a := reflect.ValueOf(obj)
 	b := reflect.Indirect(a)
