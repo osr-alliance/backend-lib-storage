@@ -1,6 +1,8 @@
 package storage
 
 import (
+	"errors"
+	"fmt"
 	"reflect"
 )
 
@@ -22,4 +24,43 @@ func getFieldValueByName(name string, s interface{}) interface{} {
 		return nil
 	}
 	return f.Interface()
+}
+
+func scanToDest(rows []interface{}, dest interface{}) error {
+	value := reflect.ValueOf(dest)
+
+	// need dest to be a pointer to a slice
+	if value.Kind() != reflect.Ptr {
+		return errors.New("dest must be a pointer to a slice")
+	}
+	if value.IsNil() {
+		return errors.New("dest cannot be a nil pointer")
+	}
+
+	slice := getValue(value.Type())
+	if slice.Kind() != reflect.Slice {
+		return fmt.Errorf("expected slice but got %s", slice.Kind())
+	}
+
+	direct := reflect.Indirect(value)
+	isPointer := (slice.Elem().Kind() == reflect.Ptr)
+
+	for _, row := range rows {
+		// append
+		if isPointer {
+			direct.Set(reflect.Append(direct, reflect.ValueOf(row)))
+		} else {
+			direct.Set(reflect.Append(direct, reflect.Indirect(reflect.ValueOf(row))))
+		}
+	}
+
+	return nil
+}
+
+// getValue
+func getValue(t reflect.Type) reflect.Type {
+	if t.Kind() == reflect.Ptr {
+		t = t.Elem()
+	}
+	return t
 }

@@ -7,6 +7,15 @@ import (
 	"github.com/jmoiron/sqlx"
 )
 
+type actionTypes int32
+
+const (
+	actionSelect actionTypes = iota
+	actionInsert
+	actionUpdate
+	actionDelete
+)
+
 // Define the cache actions you can take
 type CacheAction int32
 

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"reflect"
 
 	"github.com/go-redis/redis/v8"
 	"github.com/jmoiron/sqlx"
@@ -35,7 +36,7 @@ type Storage interface {
 		developer-friendly way because then you'd have to type-cast and check the objs being returned. Much easier to do it this
 		way from a developer's standpoint
 	*/
-	SelectAll(ctx context.Context, obj interface{}, objs interface{}, key int32) error
+	SelectAll(ctx context.Context, obj interface{}, objs interface{}, key int32, offset int64, limit int64) error
 
 	DeleteKeys(ctx context.Context, objs ...interface{}) error // Deletes the object's keys from the cache
 
@@ -66,6 +67,8 @@ type storage struct {
 		This is a map of the configKey.Type -> configKey
 	*/
 	insertKeys map[string]*ConfigKey // maps struct to the insert key
+
+	keysToConfigKey map[int32]*ConfigKey // maps key to the config key
 }
 
 type Config struct {
@@ -80,12 +83,13 @@ type Config struct {
 func New(conf *Config) Storage {
 	// create storage
 	s := &storage{
-		readConn:     conf.ReadOnlyDbConn,
-		writeConn:    conf.WriteOnlyDbConn,
-		cache:        newCache(conf.Redis),
-		keys:         make(map[int32]*Key),
-		keysToStruct: make(map[int32]string),
-		insertKeys:   make(map[string]*ConfigKey),
+		readConn:        conf.ReadOnlyDbConn,
+		writeConn:       conf.WriteOnlyDbConn,
+		cache:           newCache(conf.Redis),
+		keys:            make(map[int32]*Key),
+		keysToStruct:    make(map[int32]string),
+		insertKeys:      make(map[string]*ConfigKey),
+		keysToConfigKey: make(map[int32]*ConfigKey),
 	}
 
 	// TODO: validate cache keys
@@ -96,6 +100,7 @@ func New(conf *Config) Storage {
 		for _, key := range confKey.Keys {
 			s.keys[key.Name] = key
 			s.keysToStruct[key.Name] = structName
+			s.keysToConfigKey[key.Name] = confKey
 		}
 
 		// then add the configKey to the insertKeys
@@ -122,8 +127,7 @@ func (s *storage) TXEnd(ctx context.Context, tx *sqlx.Tx, obj ...interface{}) er
 }
 
 func (s *storage) Update(ctx context.Context, obj interface{}) error {
-	s.update(ctx, obj, s.writeConn)
-	return nil
+	return s.update(ctx, obj, s.writeConn)
 }
 
 func (s *storage) Insert(ctx context.Context, obj interface{}) error {
@@ -138,7 +142,7 @@ func (s *storage) Select(ctx context.Context, obj interface{}, key int32) error 
 
 	// get the cache key namme
 	keyName := k.getKeyName(obj)
-	fmt.Println("keyName: ", keyName)
+	fmt.Printf("keyName in Select: %v\nObj: %+v\n", keyName, obj)
 
 	// get the cache value
 	// the obj should be of the value that the cache is expecting so we can then just unmarshal into that
@@ -152,13 +156,13 @@ func (s *storage) Select(ctx context.Context, obj interface{}, key int32) error 
 
 	// check to see if there's a real error
 	if err != nil && err != redis.Nil {
-		fmt.Println("cache get error: ", err)
+		fmt.Println("cache get error in select: ", err)
 		return err
 	}
 
 	// we have an err and it's a redis.Nil which means the value wasn't found in the cache
 	// let's get from the database and then set the cache
-	err = s.query(ctx, obj, k)
+	_, err = s.query(ctx, obj, k)
 	if err != nil {
 		fmt.Println("err in setting the value: ", err)
 		return err
@@ -175,7 +179,7 @@ func (s *storage) Clear(ctx context.Context, serviceName string) error {
 
 func (s *storage) DeleteKeys(ctx context.Context, objs ...interface{}) error {
 	for _, obj := range objs {
-		err := s.action(obj, CacheDel)
+		err := s.action(obj, actionDelete)
 		if err != nil {
 			return err
 		}
@@ -183,7 +187,7 @@ func (s *storage) DeleteKeys(ctx context.Context, objs ...interface{}) error {
 	return nil
 }
 
-func (s *storage) SelectAll(ctx context.Context, obj interface{}, objs interface{}, key int32) error {
+func (s *storage) SelectAll(ctx context.Context, obj interface{}, dest interface{}, key int32, offset int64, limit int64) error {
 	fmt.Printf("insertKeys: %+v\nkeys: %+v\n", s.insertKeys, s.keys)
 
 	k, ok := s.keys[key]
@@ -193,33 +197,49 @@ func (s *storage) SelectAll(ctx context.Context, obj interface{}, objs interface
 
 	// get the cache key namme
 	keyName := k.getKeyName(obj)
-	fmt.Println("keyName: ", keyName)
+	fmt.Printf("keyName: %v\nObj: %+v\n", keyName, obj)
 
 	// get the cache value
 	// the obj should be of the value that the cache is expecting so we can then just unmarshal into that
-	err := s.cache.get(ctx, keyName, obj)
-	if err == nil {
-		// we found the value in the cache
-		fmt.Println("found in cache; returning")
-		// object should already be set in the obj
-		return nil
+	ints := []int32{}
+	err := s.cache.LRange(ctx, keyName, offset, limit).ScanSlice(&ints)
+
+	// LRange doens't throw err when key doesn't exist for some fucking reason
+	if err == nil && len(ints) > 0 {
+		confKey := s.keysToConfigKey[key]
+		// create duplicate of the struct
+		dup := reflect.New(reflect.TypeOf(confKey.Struct))
+
+		res := []interface{}{}
+		for _, i := range ints {
+			dup.Elem().FieldByName(confKey.PrimaryKeyField).SetInt(int64(i))
+			err = s.Select(ctx, dup.Interface(), confKey.PrimaryStorageKeyName)
+			if err != nil {
+				return err
+			}
+			res = append(res, dup.Interface())
+		}
+
+		// put the res into the dest (type of []interface to dest's type)
+		return scanToDest(res, dest)
 	}
 
 	// check to see if there's a real error
 	if err != nil && err != redis.Nil {
-		fmt.Println("cache get error: ", err)
+		fmt.Println("cache lrange error: ", err)
 		return err
 	}
 
+	// todod: validate that the obj is a slice
+
 	// we have an err and it's a redis.Nil which means the value wasn't found in the cache
 	// let's get from the database and then set the cache
-	err = s.query(ctx, obj, k)
+	res, err := s.query(ctx, obj, k)
 	if err != nil {
 		fmt.Println("err in setting the value: ", err)
 		return err
 	}
 
-	// TODO: if key.CacheDataStructure == CacheDataStructureList then we need to get the actual values & not just the IDs
-
-	return nil
+	// put the res into the dest (type of []interface to dest's type)
+	return scanToDest(res, dest)
 }

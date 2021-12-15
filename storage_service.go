@@ -12,13 +12,13 @@ func (s *storage) insert(ctx context.Context, obj interface{}, conn InsertInterf
 		return err
 	}
 
-	go func() {
+	func() {
 		// now take action on the obj / key
 		for _, key := range configKey.Keys {
 			fmt.Println("updating key ", key.Key)
 			var err error
 
-			s.action(obj, key.InsertAction)
+			s.action(obj, actionInsert)
 
 			if err != nil {
 				// do not return; we want to update all the keys
@@ -36,13 +36,13 @@ func (s *storage) update(ctx context.Context, obj interface{}, conn InsertInterf
 		return err
 	}
 
-	go func() {
+	func() {
 		// now take action on the obj / key
 		for _, key := range configKey.Keys {
 			fmt.Println("updating key ", key.Key)
 			var err error
 
-			s.action(obj, key.UpdateAction)
+			s.action(obj, actionUpdate)
 
 			if err != nil {
 				// do not return; we want to update all the keys
@@ -55,40 +55,42 @@ func (s *storage) update(ctx context.Context, obj interface{}, conn InsertInterf
 }
 
 // QUERY SHOULD BE SELECT BUT GOLANG IS A FUCKING BITCH AND WON'T LET ME USE THAT RESERVED KEYWORD AS A FUNCTION NAME EVEN THOUGH IT'S ON TOP OF A STRUCT
-func (s *storage) query(ctx context.Context, obj interface{}, key *Key) error {
-	fmt.Println("in s.get()")
+func (s *storage) query(ctx context.Context, obj interface{}, key *Key) ([]interface{}, error) {
 
 	// let's now execute the query
 	rows, err := s.readConn.NamedQuery(key.Query, obj)
 	if err != nil {
 		fmt.Println("err in set on queryx: ", err.Error(), "query: ", key.Query)
-		return err
+		return nil, err
 	}
 	// Let's make sure we don't have a memory leak!! :)
 	defer rows.Close()
+
+	objs := []interface{}{}
 
 	for rows.Next() {
 		err = rows.StructScan(obj)
 		if err != nil {
 			fmt.Println("err in set on rows.MapScan: ", err.Error())
-			return err
+			return nil, err
 		}
 
-		go s.action(obj, key.SelectAction)
+		objs = append(objs, obj)
+
+		s.action(obj, actionSelect)
 
 		if err != nil {
 			fmt.Println("err in set on s.cache.set: ", err.Error())
-			return err
+			return nil, err
 		}
 		fmt.Printf("results: %+v\n", obj)
 	}
 
-	return nil
+	return objs, nil
 }
 
 // delete takes action on all the keys and referenced keys associated with this object
 func (s *storage) delete(ctx context.Context, obj interface{}) error {
-	fmt.Println("in s.insert")
 	structName := getStructName(obj)
 	if structName == "" {
 		return errors.New("struct name cannot be blank")
@@ -103,7 +105,7 @@ func (s *storage) delete(ctx context.Context, obj interface{}) error {
 		fmt.Println("updating key ", key.Key)
 		var err error
 
-		go s.action(obj, key.InsertAction)
+		s.action(obj, actionDelete)
 
 		if err != nil {
 			// do not return; we want to update all the keys
@@ -115,7 +117,6 @@ func (s *storage) delete(ctx context.Context, obj interface{}) error {
 }
 
 func (s *storage) insertOrUpdate(ctx context.Context, obj interface{}, conn InsertInterface) (error, *ConfigKey) {
-	fmt.Println("inserting")
 
 	// get the struct's string name to get config key
 	structName := getStructName(obj)
@@ -132,8 +133,6 @@ func (s *storage) insertOrUpdate(ctx context.Context, obj interface{}, conn Inse
 	}
 
 	// cool, now let's make the actual insert
-	fmt.Println("query is: ", configKey.Insert.Query)
-	fmt.Printf("obj: %+v\n", obj)
 	rows, err := conn.NamedQuery(configKey.Insert.Query, obj)
 	if err != nil {
 		fmt.Println("err in insert: ", err)
@@ -155,17 +154,16 @@ func (s *storage) insertOrUpdate(ctx context.Context, obj interface{}, conn Inse
 	return nil, configKey
 }
 
-func (s *storage) action(obj interface{}, action CacheAction) error {
+func (s *storage) action(obj interface{}, action actionTypes) error {
 	/*
 		There's a slight race condition that we might hit if we don't make a new context related to how the grpc connection could
-		close due to being done with the query & this happening given enough keys and this usually being in a go routine.
+		close due to being done with the query & this happening given enough keys and this usually being in a routine.
 
 		Since we don't need any of the metadata, let's just
 	*/
 
 	ctx := context.Background()
 
-	fmt.Println("in s.action")
 	structName := getStructName(obj)
 	if structName == "" {
 		return errors.New("struct name cannot be blank")
@@ -178,28 +176,37 @@ func (s *storage) action(obj interface{}, action CacheAction) error {
 
 	for _, key := range configKey.Keys {
 		fmt.Println("action on key ", key.Key)
+		keyName := key.getKeyName(obj)
+
+		var actionToTake CacheAction
+		switch action {
+		case actionInsert:
+			actionToTake = key.InsertAction
+		case actionUpdate:
+			actionToTake = key.UpdateAction
+		case actionDelete:
+			actionToTake = CacheDel
+		case actionSelect:
+			actionToTake = key.SelectAction
+		}
+
 		var err error
 
-		switch action {
+		switch actionToTake {
 		case CacheNoAction:
 			fmt.Println("insert action is CacheNoAction")
 			// don't do anything;
 
 		case CacheSet:
-			keyName := key.getKeyName(obj)
 			fmt.Println("setting key for ", keyName)
 			err = s.cache.set(ctx, keyName, obj, key.CacheTTL)
 
 		case CacheDel:
-			keyName := key.getKeyName(obj)
 			fmt.Println("deleting key for ", keyName)
 			s.cache.Del(ctx, keyName)
 
 		case CacheLPush:
-
 			value := getFieldValueByName(configKey.PrimaryKeyField, obj)
-			keyName := key.getKeyName(obj)
-			fmt.Println("LPushing key for ", keyName)
 			if value == nil {
 				err = errors.New("value is nil")
 			}
