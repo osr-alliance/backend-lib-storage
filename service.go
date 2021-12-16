@@ -1,10 +1,44 @@
 package storage
 
 import (
-	"errors"
-	"fmt"
+	"encoding/json"
 	"reflect"
 )
+
+// structToMap converts a struct to a map and adds the struct name as a key
+func structToMap(obj interface{}) (map[string]interface{}, error) {
+	// lol...
+	m := map[string]interface{}{}
+
+	j, err := json.Marshal(obj)
+	if err != nil {
+		return nil, err
+	}
+
+	m[objMapStructNameKey] = getStructName(obj)
+
+	return m, json.Unmarshal(j, &m)
+}
+
+// mapToStruct converts a map to a struct
+func mapToStruct(m map[string]interface{}, s interface{}) error {
+	j, err := json.Marshal(m)
+	if err != nil {
+		return err
+	}
+
+	return json.Unmarshal(j, s)
+}
+
+// mapsToStruct converts a map to a struct
+func mapsToStruct(m []map[string]interface{}, s interface{}) error {
+	j, err := json.Marshal(m)
+	if err != nil {
+		return err
+	}
+
+	return json.Unmarshal(j, s)
+}
 
 func getStructName(myvar interface{}) string {
 	if t := reflect.TypeOf(myvar); t.Kind() == reflect.Ptr {
@@ -12,55 +46,4 @@ func getStructName(myvar interface{}) string {
 	} else {
 		return t.Name()
 	}
-}
-
-func getFieldValueByName(name string, s interface{}) interface{} {
-	v := reflect.ValueOf(s)
-	if v.Kind() == reflect.Ptr {
-		v = v.Elem()
-	}
-	f := v.FieldByName(name)
-	if !f.IsValid() {
-		return nil
-	}
-	return f.Interface()
-}
-
-func scanToDest(rows []interface{}, dest interface{}) error {
-	value := reflect.ValueOf(dest)
-
-	// need dest to be a pointer to a slice
-	if value.Kind() != reflect.Ptr {
-		return errors.New("dest must be a pointer to a slice")
-	}
-	if value.IsNil() {
-		return errors.New("dest cannot be a nil pointer")
-	}
-
-	slice := getValue(value.Type())
-	if slice.Kind() != reflect.Slice {
-		return fmt.Errorf("expected slice but got %s", slice.Kind())
-	}
-
-	direct := reflect.Indirect(value)
-	isPointer := (slice.Elem().Kind() == reflect.Ptr)
-
-	for _, row := range rows {
-		// append
-		if isPointer {
-			direct.Set(reflect.Append(direct, reflect.ValueOf(row)))
-		} else {
-			direct.Set(reflect.Append(direct, reflect.Indirect(reflect.ValueOf(row))))
-		}
-	}
-
-	return nil
-}
-
-// getValue
-func getValue(t reflect.Type) reflect.Type {
-	if t.Kind() == reflect.Ptr {
-		t = t.Elem()
-	}
-	return t
 }

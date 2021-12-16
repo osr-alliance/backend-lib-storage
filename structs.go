@@ -2,7 +2,6 @@ package storage
 
 import (
 	"fmt"
-	"reflect"
 
 	"github.com/jmoiron/sqlx"
 )
@@ -14,6 +13,10 @@ const (
 	actionInsert
 	actionUpdate
 	actionDelete
+)
+
+const (
+	objMapStructNameKey = "_structName"
 )
 
 // Define the cache actions you can take
@@ -53,14 +56,11 @@ type Key struct {
 }
 
 // getKeyName takes a cache's abstract key, e.g. `service:lead|LeadID:%v` and returns the key name e.g. `service:lead|LeadID:1273`
-func (k *Key) getKeyName(obj interface{}) string {
-	a := reflect.ValueOf(obj)
-	b := reflect.Indirect(a)
+func (k *Key) getKeyName(objMap map[string]interface{}) string {
 
 	args := []interface{}{}
-
 	for _, field := range k.Fields {
-		args = append(args, b.FieldByName(field))
+		args = append(args, objMap[field])
 	}
 
 	return fmt.Sprintf(k.Key, args...)

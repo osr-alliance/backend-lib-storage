@@ -17,6 +17,7 @@ This is the part of the README that I really should type out but... ugh. Just fu
 ## TODO
 - Support cache clusters (I have to look if this is already supported actually)
 - Enable go routines (specifically when doing an s.action()) for improvements; I disabled for debugging purposes
+- **needed feature**: a CacheDataStructureList should be able to store a primary key to another table as its range and get that table's info instead of its own 
 - There are a lot of performance gains by optimizing the New() portion and adding a lot of the reflection.TypeOf checks in there
 - More validation checks during both runtime and during initialization e.g. checking to make sure SelectAction on the key matches its CacheDataStructure
 - We might not actually need CacheDataStructure. Might be good to have though

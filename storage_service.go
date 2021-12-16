@@ -6,59 +6,59 @@ import (
 	"fmt"
 )
 
-func (s *storage) insert(ctx context.Context, obj interface{}, conn InsertInterface) error {
-	err, configKey := s.insertOrUpdate(ctx, obj, conn)
+func (s *storage) insert(ctx context.Context, objMap *map[string]interface{}, conn InsertInterface) error {
+	configKey, err := s.insertOrUpdate(ctx, objMap, conn)
 	if err != nil {
 		return err
 	}
 
-	func() {
-		// now take action on the obj / key
-		for _, key := range configKey.Keys {
-			fmt.Println("updating key ", key.Key)
-			var err error
+	// now take action on the obj / key
+	for _, key := range configKey.Keys {
+		fmt.Println("updating key ", key.Key)
 
-			s.action(obj, actionInsert)
-
-			if err != nil {
-				// do not return; we want to update all the keys
-				fmt.Println("err in update: ", err)
-			}
+		err = s.action(*objMap, actionInsert)
+		if err != nil {
+			return err
 		}
-	}()
+
+		if err != nil {
+			// do not return; we want to update all the keys
+			fmt.Println("err in update: ", err)
+		}
+	}
 
 	return nil
 }
 
-func (s *storage) update(ctx context.Context, obj interface{}, conn InsertInterface) error {
-	err, configKey := s.insertOrUpdate(ctx, obj, conn)
+func (s *storage) update(ctx context.Context, objMap *map[string]interface{}, conn InsertInterface) error {
+	configKey, err := s.insertOrUpdate(ctx, objMap, conn)
 	if err != nil {
 		return err
 	}
 
-	func() {
-		// now take action on the obj / key
-		for _, key := range configKey.Keys {
-			fmt.Println("updating key ", key.Key)
-			var err error
+	// now take action on the objMap / key
+	for _, key := range configKey.Keys {
+		fmt.Println("updating key ", key.Key)
 
-			s.action(obj, actionUpdate)
-
-			if err != nil {
-				// do not return; we want to update all the keys
-				fmt.Println("err in update: ", err)
-			}
+		err = s.action(*objMap, actionUpdate)
+		if err != nil {
+			return err
 		}
-	}()
+
+		if err != nil {
+			// do not return; we want to update all the keys
+			fmt.Println("err in update: ", err)
+		}
+	}
 
 	return nil
 }
 
 // QUERY SHOULD BE SELECT BUT GOLANG IS A FUCKING BITCH AND WON'T LET ME USE THAT RESERVED KEYWORD AS A FUNCTION NAME EVEN THOUGH IT'S ON TOP OF A STRUCT
-func (s *storage) query(ctx context.Context, obj interface{}, key *Key) ([]interface{}, error) {
-
+func (s *storage) query(ctx context.Context, objMap map[string]interface{}, key *Key) ([]map[string]interface{}, error) {
+	fmt.Printf("query: %+v\n", objMap)
 	// let's now execute the query
-	rows, err := s.readConn.NamedQuery(key.Query, obj)
+	rows, err := s.readConn.NamedQuery(key.Query, objMap)
 	if err != nil {
 		fmt.Println("err in set on queryx: ", err.Error(), "query: ", key.Query)
 		return nil, err
@@ -66,32 +66,37 @@ func (s *storage) query(ctx context.Context, obj interface{}, key *Key) ([]inter
 	// Let's make sure we don't have a memory leak!! :)
 	defer rows.Close()
 
-	objs := []interface{}{}
+	objs := []map[string]interface{}{}
 
 	for rows.Next() {
-		err = rows.StructScan(obj)
+
+		row := map[string]interface{}{}
+		err = rows.MapScan(row)
 		if err != nil {
 			fmt.Println("err in set on rows.MapScan: ", err.Error())
 			return nil, err
 		}
 
-		objs = append(objs, obj)
+		// set the struct name
+		row[objMapStructNameKey] = objMap[objMapStructNameKey]
 
-		s.action(obj, actionSelect)
+		objs = append(objs, row)
 
+		err = s.action(row, actionSelect)
 		if err != nil {
 			fmt.Println("err in set on s.cache.set: ", err.Error())
 			return nil, err
 		}
-		fmt.Printf("results: %+v\n", obj)
 	}
+
+	fmt.Printf("results: %+v\n", objs)
 
 	return objs, nil
 }
 
 // delete takes action on all the keys and referenced keys associated with this object
-func (s *storage) delete(ctx context.Context, obj interface{}) error {
-	structName := getStructName(obj)
+func (s *storage) delete(ctx context.Context, obj map[string]interface{}) error {
+	structName := obj[objMapStructNameKey].(string)
 	if structName == "" {
 		return errors.New("struct name cannot be blank")
 	}
@@ -116,45 +121,46 @@ func (s *storage) delete(ctx context.Context, obj interface{}) error {
 	return nil
 }
 
-func (s *storage) insertOrUpdate(ctx context.Context, obj interface{}, conn InsertInterface) (error, *ConfigKey) {
-
+func (s *storage) insertOrUpdate(ctx context.Context, objMap *map[string]interface{}, conn InsertInterface) (*ConfigKey, error) {
 	// get the struct's string name to get config key
-	structName := getStructName(obj)
+	structName := (*objMap)[objMapStructNameKey].(string)
 	if structName == "" {
 		fmt.Println("struct name cannot be blank")
-		return errors.New("struct name cannot be blank"), nil
+		return nil, errors.New("struct name cannot be blank")
 	}
 
 	// get config key
 	configKey, ok := s.insertKeys[structName]
 	if !ok {
 		fmt.Println("no config key found for " + structName)
-		return errors.New("no config key found for " + structName), nil
+		return nil, errors.New("no config key found for " + structName)
 	}
 
 	// cool, now let's make the actual insert
-	rows, err := conn.NamedQuery(configKey.Insert.Query, obj)
+	rows, err := conn.NamedQuery(configKey.Insert.Query, *objMap)
 	if err != nil {
 		fmt.Println("err in insert: ", err)
-		return err, nil
+		return nil, err
 	}
 	defer rows.Close()
 
 	// all inserts & updates should have returning * thus we can just use the obj to scan into
 	// there should only be one row but still do rows.Next()
+
 	for rows.Next() {
-		err = rows.StructScan(obj)
-		fmt.Printf("scanned obj: %+v\n", obj)
+
+		err = rows.MapScan(*objMap)
+		fmt.Printf("scanned obj: %+v\n", objMap)
 		if err != nil {
 			fmt.Println("err in scan: ", err)
-			return err, nil
+			return nil, err
 		}
 	}
 
-	return nil, configKey
+	return configKey, nil
 }
 
-func (s *storage) action(obj interface{}, action actionTypes) error {
+func (s *storage) action(objMap map[string]interface{}, action actionTypes) error {
 	/*
 		There's a slight race condition that we might hit if we don't make a new context related to how the grpc connection could
 		close due to being done with the query & this happening given enough keys and this usually being in a routine.
@@ -162,9 +168,10 @@ func (s *storage) action(obj interface{}, action actionTypes) error {
 		Since we don't need any of the metadata, let's just
 	*/
 
+	fmt.Printf("ACTION obj map: %+v\n", objMap)
 	ctx := context.Background()
 
-	structName := getStructName(obj)
+	structName := objMap[objMapStructNameKey].(string)
 	if structName == "" {
 		return errors.New("struct name cannot be blank")
 	}
@@ -175,8 +182,8 @@ func (s *storage) action(obj interface{}, action actionTypes) error {
 	}
 
 	for _, key := range configKey.Keys {
-		fmt.Println("action on key ", key.Key)
-		keyName := key.getKeyName(obj)
+		keyName := key.getKeyName(objMap)
+		fmt.Println("action on key ", keyName)
 
 		var actionToTake CacheAction
 		switch action {
@@ -199,17 +206,18 @@ func (s *storage) action(obj interface{}, action actionTypes) error {
 
 		case CacheSet:
 			fmt.Println("setting key for ", keyName)
-			err = s.cache.set(ctx, keyName, obj, key.CacheTTL)
+			err = s.cache.set(ctx, keyName, objMap, key.CacheTTL)
 
 		case CacheDel:
 			fmt.Println("deleting key for ", keyName)
 			s.cache.Del(ctx, keyName)
 
 		case CacheLPush:
-			value := getFieldValueByName(configKey.PrimaryKeyField, obj)
-			if value == nil {
-				err = errors.New("value is nil")
-			}
+			value := objMap[configKey.PrimaryKeyField]
+			fmt.Println()
+			fmt.Println("pushing value ", value, " to list ", keyName)
+			fmt.Println()
+
 			s.cache.LPush(ctx, keyName, value)
 
 		default:
@@ -224,30 +232,3 @@ func (s *storage) action(obj interface{}, action actionTypes) error {
 
 	return nil
 }
-
-/*
-func (s *storage) getPrimaryKeyField(obj interface{}, key *Key) (string, error) {
-	if key.CacheDataStructure != CacheDataStructureList {
-		// if it's not a list then you don't need the primary key
-		return "", nil
-	}
-
-	structName := getStructName(obj)
-	if structName == "" {
-		return "", errors.New("struct name cannot be blank")
-	}
-
-	configKey, ok := s.insertKeys[structName]
-	if !ok {
-		return "", errors.New("no config key found for " + structName)
-	}
-
-	primaryKeyField := configKey.PrimaryKeyField
-
-	if primaryKeyField == "" {
-		return "", errors.New("no primary key field found for " + structName)
-	}
-
-	return primaryKeyField, nil
-}
-*/

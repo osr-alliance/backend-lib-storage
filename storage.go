@@ -4,10 +4,11 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"reflect"
+	"strings"
 
 	"github.com/go-redis/redis/v8"
 	"github.com/jmoiron/sqlx"
+	"github.com/jmoiron/sqlx/reflectx"
 )
 
 /*
@@ -63,6 +64,11 @@ type storage struct {
 	keysToStruct map[int32]string
 
 	/*
+		keysToMap takes the key.Name and returns the empty map with the keys that are needed for the key's struct
+	*/
+	keysToMap map[int32]map[string]interface{}
+
+	/*
 		insertKeys is used to *INSERT* a key or query into the database
 		This is a map of the configKey.Type -> configKey
 	*/
@@ -80,8 +86,13 @@ type Config struct {
 }
 
 // New returns group which implements the interface
-func New(conf *Config) Storage {
+func New(conf *Config) (Storage, error) {
 	// create storage
+
+	// use the json tag instead of the DB tag
+	conf.ReadOnlyDbConn.Mapper = reflectx.NewMapperFunc("json", strings.ToLower)
+	conf.WriteOnlyDbConn.Mapper = reflectx.NewMapperFunc("json", strings.ToLower)
+
 	s := &storage{
 		readConn:        conf.ReadOnlyDbConn,
 		writeConn:       conf.WriteOnlyDbConn,
@@ -90,6 +101,7 @@ func New(conf *Config) Storage {
 		keysToStruct:    make(map[int32]string),
 		insertKeys:      make(map[string]*ConfigKey),
 		keysToConfigKey: make(map[int32]*ConfigKey),
+		keysToMap:       make(map[int32]map[string]interface{}),
 	}
 
 	// TODO: validate cache keys
@@ -98,6 +110,13 @@ func New(conf *Config) Storage {
 
 		// first add the key to keys & keysToStruct
 		for _, key := range confKey.Keys {
+			structMap, err := structToMap(confKey.Struct)
+			if err != nil {
+				return nil, errors.New(fmt.Sprintf("error getting struct map for %s: %s", structName, err.Error()))
+			}
+
+			s.keysToMap[key.Name] = structMap
+
 			s.keys[key.Name] = key
 			s.keysToStruct[key.Name] = structName
 			s.keysToConfigKey[key.Name] = confKey
@@ -107,7 +126,7 @@ func New(conf *Config) Storage {
 		s.insertKeys[structName] = confKey
 	}
 
-	return s
+	return s, nil
 }
 
 func (s *storage) TXBegin(ctx context.Context) (*sqlx.Tx, error) {
@@ -115,23 +134,60 @@ func (s *storage) TXBegin(ctx context.Context) (*sqlx.Tx, error) {
 }
 
 func (s *storage) TXInsert(ctx context.Context, tx *sqlx.Tx, obj interface{}) error {
-	return s.insert(ctx, obj, tx)
+	objMap, err := structToMap(obj)
+	if err != nil {
+		return err
+	}
+	err = s.insert(ctx, &objMap, tx)
+	if err != nil {
+		return err
+	}
+	return mapToStruct(objMap, obj)
 }
 
 func (s *storage) TXUpdate(ctx context.Context, tx *sqlx.Tx, obj interface{}) error {
-	return s.update(ctx, obj, tx)
+	objMap, err := structToMap(obj)
+	if err != nil {
+		return err
+	}
+	err = s.update(ctx, &objMap, tx)
+	if err != nil {
+		return err
+	}
+	return mapToStruct(objMap, obj)
 }
 
 func (s *storage) TXEnd(ctx context.Context, tx *sqlx.Tx, obj ...interface{}) error {
-	return tx.Commit()
+	err := tx.Commit()
+	if err != nil {
+		tx.Rollback()
+	}
+	s.DeleteKeys(ctx, obj...)
+	return err
 }
 
 func (s *storage) Update(ctx context.Context, obj interface{}) error {
-	return s.update(ctx, obj, s.writeConn)
+	objMap, err := structToMap(obj)
+	if err != nil {
+		return err
+	}
+	err = s.update(ctx, &objMap, s.writeConn)
+	if err != nil {
+		return err
+	}
+	return mapToStruct(objMap, obj)
 }
 
 func (s *storage) Insert(ctx context.Context, obj interface{}) error {
-	return s.insert(ctx, obj, s.writeConn)
+	objMap, err := structToMap(obj)
+	if err != nil {
+		return err
+	}
+	err = s.insert(ctx, &objMap, s.writeConn)
+	if err != nil {
+		return err
+	}
+	return mapToStruct(objMap, obj)
 }
 
 func (s *storage) Select(ctx context.Context, obj interface{}, key int32) error {
@@ -140,13 +196,18 @@ func (s *storage) Select(ctx context.Context, obj interface{}, key int32) error 
 		return errors.New("config key not found; have you configured storage properly?")
 	}
 
+	objMap, err := structToMap(obj)
+	if err != nil {
+		return err
+	}
+
 	// get the cache key namme
-	keyName := k.getKeyName(obj)
+	keyName := k.getKeyName(objMap)
 	fmt.Printf("keyName in Select: %v\nObj: %+v\n", keyName, obj)
 
 	// get the cache value
 	// the obj should be of the value that the cache is expecting so we can then just unmarshal into that
-	err := s.cache.get(ctx, keyName, obj)
+	err = s.cache.get(ctx, keyName, obj)
 	if err == nil {
 		// we found the value in the cache
 		fmt.Println("found in cache; returning")
@@ -162,14 +223,22 @@ func (s *storage) Select(ctx context.Context, obj interface{}, key int32) error 
 
 	// we have an err and it's a redis.Nil which means the value wasn't found in the cache
 	// let's get from the database and then set the cache
-	_, err = s.query(ctx, obj, k)
+	res, err := s.query(ctx, objMap, k)
 	if err != nil {
 		fmt.Println("err in setting the value: ", err)
 		return err
 	}
 
+	fmt.Printf("res in select: %+v\n", res)
+
+	if len(res) == 0 {
+		return errors.New("no results found")
+	}
+
 	// TODO: if key.CacheDataStructure == CacheDataStructureList then we need to get the actual values & not just the IDs
 
+	mapToStruct(res[0], obj)
+	fmt.Printf("obj in select: %+v\n", obj)
 	return nil
 }
 
@@ -179,7 +248,11 @@ func (s *storage) Clear(ctx context.Context, serviceName string) error {
 
 func (s *storage) DeleteKeys(ctx context.Context, objs ...interface{}) error {
 	for _, obj := range objs {
-		err := s.action(obj, actionDelete)
+		objMap, err := structToMap(obj)
+		if err != nil {
+			return err
+		}
+		err = s.action(objMap, actionDelete)
 		if err != nil {
 			return err
 		}
@@ -188,40 +261,49 @@ func (s *storage) DeleteKeys(ctx context.Context, objs ...interface{}) error {
 }
 
 func (s *storage) SelectAll(ctx context.Context, obj interface{}, dest interface{}, key int32, offset int64, limit int64) error {
-	fmt.Printf("insertKeys: %+v\nkeys: %+v\n", s.insertKeys, s.keys)
-
 	k, ok := s.keys[key]
 	if !ok {
-		return errors.New("key not found")
+		return errors.New("config key not found; have you configured storage properly?")
+	}
+
+	objMap, err := structToMap(obj)
+	if err != nil {
+		return err
 	}
 
 	// get the cache key namme
-	keyName := k.getKeyName(obj)
-	fmt.Printf("keyName: %v\nObj: %+v\n", keyName, obj)
+	keyName := k.getKeyName(objMap)
+	fmt.Printf("keyName in SelectAll: %v\nObj: %+v\n", keyName, obj)
 
 	// get the cache value
 	// the obj should be of the value that the cache is expecting so we can then just unmarshal into that
 	ints := []int32{}
-	err := s.cache.LRange(ctx, keyName, offset, limit).ScanSlice(&ints)
+	err = s.cache.LRange(ctx, keyName, offset, limit).ScanSlice(&ints)
 
 	// LRange doens't throw err when key doesn't exist for some fucking reason
 	if err == nil && len(ints) > 0 {
 		confKey := s.keysToConfigKey[key]
-		// create duplicate of the struct
-		dup := reflect.New(reflect.TypeOf(confKey.Struct))
 
-		res := []interface{}{}
+		res := []map[string]interface{}{}
 		for _, i := range ints {
-			dup.Elem().FieldByName(confKey.PrimaryKeyField).SetInt(int64(i))
-			err = s.Select(ctx, dup.Interface(), confKey.PrimaryStorageKeyName)
+			// create duplicate of the struct
+
+			row := map[string]interface{}{
+				confKey.PrimaryKeyField: i,
+				objMapStructNameKey:     objMap[objMapStructNameKey],
+			}
+
+			err = s.Select(ctx, &row, confKey.PrimaryStorageKeyName)
 			if err != nil {
 				return err
 			}
-			res = append(res, dup.Interface())
+			res = append(res, row)
 		}
 
 		// put the res into the dest (type of []interface to dest's type)
-		return scanToDest(res, dest)
+		mapsToStruct(res, dest)
+		fmt.Printf("obj in selectall beginngin: %+v\n", dest)
+		return nil
 	}
 
 	// check to see if there's a real error
@@ -234,12 +316,13 @@ func (s *storage) SelectAll(ctx context.Context, obj interface{}, dest interface
 
 	// we have an err and it's a redis.Nil which means the value wasn't found in the cache
 	// let's get from the database and then set the cache
-	res, err := s.query(ctx, obj, k)
+	res, err := s.query(ctx, objMap, k)
 	if err != nil {
 		fmt.Println("err in setting the value: ", err)
 		return err
 	}
 
-	// put the res into the dest (type of []interface to dest's type)
-	return scanToDest(res, dest)
+	mapsToStruct(res, dest)
+	fmt.Printf("obj in select all end: %+v\n", dest)
+	return nil
 }
