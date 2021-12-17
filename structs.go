@@ -16,7 +16,8 @@ const (
 )
 
 const (
-	objMapStructNameKey = "_structName"
+	objMapStructNameKey    = "_structName"
+	objMapStructPrimaryKey = "_primaryKey"
 )
 
 // Define the cache actions you can take
@@ -29,6 +30,7 @@ const (
 	CacheGet
 	CacheSet
 	CacheLPush
+	CacheRPush
 )
 
 type CacheDataStructure int32
@@ -49,6 +51,20 @@ type Key struct {
 
 	CacheTTL           int                // time to live in seconds; 0 = doesn't expire
 	CacheDataStructure CacheDataStructure // data structure to use for cache e.g. if it's a single object (struct) or a list of id's
+
+	/*
+		PrimaryKeyStored is the key that stores the data in a list (useful for tables that do joins)
+		Note: only applicable if CacheDataStructure == CacheDataStructureList
+
+		An example of where this would be used is if you have a relation table, such as relation_group_user
+		and you want to store all the group_id's for a given user. The list would have the group_id's vs. relation_id's
+		and fetch & return all the groups instead
+
+		NOTE: this is really important to understand: when doing joins, the table that you insert which should cause the InsertAction is
+		the table that this key should be on top of. Example: you would do relationGroupUsersGetGroupsByUserID instead of groupGetByUserID
+		because when you insert a new group it wouldn't affect any of the relation_groups_users keys which is really where it should be.
+	*/
+	PrimaryKeyStored int32 // O
 
 	InsertAction CacheAction // action to take on this key when an insert happens to the key this struct is attached to e.g. Del, LPush, etc
 	UpdateAction CacheAction // action to take on this key when an update happens to the key this struct is attached to e.g. Del, LPush, etc

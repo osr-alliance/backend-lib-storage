@@ -114,6 +114,8 @@ func New(conf *Config) (Storage, error) {
 			if err != nil {
 				return nil, errors.New(fmt.Sprintf("error getting struct map for %s: %s", structName, err.Error()))
 			}
+			structMap[objMapStructPrimaryKey] = confKey.PrimaryKeyField
+			fmt.Printf("struct map is: %+v\n", structMap)
 
 			s.keysToMap[key.Name] = structMap
 
@@ -282,27 +284,38 @@ func (s *storage) SelectAll(ctx context.Context, obj interface{}, dest interface
 
 	// LRange doens't throw err when key doesn't exist for some fucking reason
 	if err == nil && len(ints) > 0 {
-		confKey := s.keysToConfigKey[key]
 
 		res := []map[string]interface{}{}
 		for _, i := range ints {
-			// create duplicate of the struct
+			fmt.Println("THE INT IS: ", i)
 
-			row := map[string]interface{}{
-				confKey.PrimaryKeyField: i,
-				objMapStructNameKey:     objMap[objMapStructNameKey],
+			row := map[string]interface{}{}
+			// get the row that corresponds to the primary key's id stored -> row
+			for key, val := range s.keysToMap[k.PrimaryKeyStored] {
+				row[key] = val
 			}
 
-			err = s.Select(ctx, &row, confKey.PrimaryStorageKeyName)
+			// set the primaryKeyStored's primary_key field to i
+			row[s.keysToConfigKey[k.PrimaryKeyStored].PrimaryKeyField] = i // set the primary key's value
+
+			//fmt.Printf("the row is: %+v\n", row)
+
+			err = s.Select(ctx, &row, k.PrimaryKeyStored)
 			if err != nil {
 				return err
 			}
+
+			fmt.Printf("Row is: %+v\n", row)
 			res = append(res, row)
+			fmt.Printf("res in SelectAll: %+v\n", res)
 		}
+
+		//fmt.Printf("res in SelectAll: %+v\n", res)
 
 		// put the res into the dest (type of []interface to dest's type)
 		mapsToStruct(res, dest)
 		fmt.Printf("obj in selectall beginngin: %+v\n", dest)
+
 		return nil
 	}
 
@@ -312,7 +325,9 @@ func (s *storage) SelectAll(ctx context.Context, obj interface{}, dest interface
 		return err
 	}
 
-	// todod: validate that the obj is a slice
+	// todo: validate limit and offset fields are not set before setting the keys
+	objMap["limit"] = limit
+	objMap["offset"] = offset
 
 	// we have an err and it's a redis.Nil which means the value wasn't found in the cache
 	// let's get from the database and then set the cache

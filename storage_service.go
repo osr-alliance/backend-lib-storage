@@ -213,12 +213,29 @@ func (s *storage) action(objMap map[string]interface{}, action actionTypes) erro
 			s.cache.Del(ctx, keyName)
 
 		case CacheLPush:
-			value := objMap[configKey.PrimaryKeyField]
-			fmt.Println()
-			fmt.Println("pushing value ", value, " to list ", keyName)
-			fmt.Println()
+			// get the map of the struct that's the basis for what's stored in this LRange
+			m := s.keysToMap[key.PrimaryKeyStored]
+			fmt.Println("m is", m)
 
-			s.cache.LPush(ctx, keyName, value)
+			// get the primary key (such as lead_id) from key.PrimaryKeyStored
+			v, ok := m[objMapStructPrimaryKey].(string)
+			if !ok {
+				return errors.New("issue getting key.PrimaryKeyStored of m")
+			}
+
+			s.cache.LPush(ctx, keyName, objMap[v])
+
+		case CacheRPush:
+			// get the map of the struct that's the basis for what's stored in this LRange
+			m := s.keysToMap[key.PrimaryKeyStored]
+
+			// get the primary key (such as lead_id) from key.PrimaryKeyStored
+			v, ok := m[objMapStructPrimaryKey].(string)
+			if !ok {
+				return errors.New("issue getting key.PrimaryKeyStored of m")
+			}
+
+			s.cache.RPush(ctx, keyName, objMap[v])
 
 		default:
 			err = errors.New("unknown update action")
