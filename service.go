@@ -2,7 +2,6 @@ package storage
 
 import (
 	"encoding/json"
-	"fmt"
 	"reflect"
 )
 
@@ -33,8 +32,6 @@ func mapToStruct(m map[string]interface{}, s interface{}) error {
 
 // mapsToStruct converts a map to a struct
 func mapsToStruct(m []map[string]interface{}, s interface{}) error {
-
-	fmt.Printf("m is: %+v\n\n", m)
 	j, err := json.Marshal(m)
 	if err != nil {
 		return err

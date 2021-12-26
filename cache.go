@@ -3,7 +3,6 @@ package storage
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"time"
 
 	"github.com/go-redis/redis/v8"
@@ -22,11 +21,7 @@ func newCache(conn *redis.Client) *cache {
 func (c *cache) get(ctx context.Context, key string, value interface{}) error {
 	str, err := c.Get(ctx, key).Result()
 	if err != nil {
-		/*
-			if err == redis.Nil {
-				return nil
-			}
-		*/
+		// returns err redis.Nil if key does not exist
 		return err
 	}
 
@@ -34,7 +29,6 @@ func (c *cache) get(ctx context.Context, key string, value interface{}) error {
 }
 
 func (c *cache) set(ctx context.Context, key string, value interface{}, expiration int) error {
-	fmt.Printf("setting cache with:\nKey: %s\nValue: %+v\n", key, value)
 	str, err := json.Marshal(value)
 	if err != nil {
 		return err
