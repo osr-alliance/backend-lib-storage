@@ -37,8 +37,6 @@ func mapsToStruct(m []map[string]interface{}, s interface{}) error {
 		return err
 	}
 
-	//fmt.Println(string(j))
-
 	return json.Unmarshal(j, s)
 }
 

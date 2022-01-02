@@ -2,8 +2,6 @@ package storage
 
 import (
 	"fmt"
-
-	"github.com/jmoiron/sqlx"
 )
 
 type actionTypes int32
@@ -18,6 +16,9 @@ const (
 const (
 	objMapStructNameKey    = "_structName"
 	objMapStructPrimaryKey = "_primaryKey"
+
+	cacheKeyListModifier         = "|offset:%v|limit:%v"
+	cacheKeyListMetadataModifier = "|metadata"
 )
 
 // Define the cache actions you can take
@@ -61,9 +62,12 @@ type Query struct {
 	*/
 	CacheKey       string
 	cacheKeyFields []string // tags of the db fields for the key e.g. if key is `service:lead|leads|lead_id:%v` then the fields would be []string{"lead_id"}
+	cacheListKey   string   // cacheListKey is the generated key name for when the cacheDataStructure is a list
 
-	CacheTTL           int                // time to live in seconds; 0 = default for the application; -1 = never expire
-	cacheDataStructure CacheDataStructure // data structure to use for cache e.g. if it's a single object (struct) or a list of id's
+	CacheTTL             int                // time to live in seconds; 0 = default for the application; -1 = never expire
+	cacheDataStructure   CacheDataStructure // data structure to use for cache e.g. if it's a single object (struct) or a list of id's
+	cacheListKeys        []string           // cacheListKeys stores the keys associated with SelectAll calls where selectOpts is defined
+	cacheListMetadataKey string             // cacheListMetadataKey is the key for the metadata associated with the list
 
 	/*
 		CachePrimaryKeyStored is the key that stores the data in a list (useful for tables that do joins)
@@ -95,25 +99,42 @@ func (q *Query) getKeyName(objMap map[string]interface{}) string {
 	return fmt.Sprintf(q.CacheKey, args...)
 }
 
+func (q *Query) getKeyNameSelectOpts(objMap map[string]interface{}, opts *SelectOptions) string {
+	args := []interface{}{}
+	for _, field := range q.cacheKeyFields {
+		args = append(args, objMap[field])
+	}
+
+	args = append(args, opts.Offset, opts.Limit)
+
+	return fmt.Sprintf(q.cacheListKey, args...)
+}
+
+func (q *Query) getKeyNameMetadata(objMap map[string]interface{}) string {
+	args := []interface{}{}
+	for _, field := range q.cacheKeyFields {
+		args = append(args, objMap[field])
+	}
+
+	return fmt.Sprintf(q.cacheListMetadataKey, args...)
+}
+
 type Insert struct {
 	Query string
 }
 
 type Table struct {
 	Struct            interface{} // DB struct this is based off o
-	InsertQuery       *Insert     // insert query for inserting data
-	PrimaryKeyField   string      // field name of the primary key e.g. LeadID or UserID
-	PrimaryQueryName  int32       // the query.Name of the one that fetches based off the primary key in the db e.g. LeadGetByID or OpportunityGetByID
-	Queries           []*Query    // all the queries that are used to fetch the data from the db & cache
-	ReferencedQueries []*Query    // the query that is used to fetch the data from the db & cache that reference *other* tables
-}
-
-type InsertInterface interface {
-	NamedQuery(query string, arg interface{}) (*sqlx.Rows, error)
+	InsertQuery       string      // insert query for inserting data
+	UpdateQuery       string
+	PrimaryKeyField   string   // field name of the primary key e.g. LeadID or UserID
+	PrimaryQueryName  int32    // the query.Name of the one that fetches based off the primary key in the db e.g. LeadGetByID or OpportunityGetByID
+	Queries           []*Query // all the queries that are used to fetch the data from the db & cache
+	ReferencedQueries []*Query // the query that is used to fetch the data from the db & cache that reference *other* tables
 }
 
 type SelectOptions struct {
-	Limit    int32
 	Offset   int32
+	Limit    int32
 	FetchAll bool // FetchAll determines if you return all data or just a list of int32's
 }

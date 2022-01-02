@@ -8,6 +8,7 @@ import (
 	"reflect"
 
 	"github.com/go-redis/redis/v8"
+	"golang.org/x/sync/errgroup"
 )
 
 func (s *storage) selectOne(ctx context.Context, obj interface{}, query int32, conn InsertInterface) error {
@@ -45,7 +46,7 @@ func (s *storage) selectOne(ctx context.Context, obj interface{}, query int32, c
 
 	// we have an err and it's a redis.Nil which means the value wasn't found in the cache
 	// let's get from the database and then set the cache
-	res, err := s.query(ctx, objMap, q, conn)
+	res, err := s.db.query(ctx, objMap, q.Query, conn)
 	if err == nil && len(res) == 0 {
 		return sql.ErrNoRows
 	}
@@ -81,15 +82,37 @@ func (s *storage) selectAll(ctx context.Context, obj interface{}, dest interface
 		return err
 	}
 
+	if opts.FetchAll {
+		err = s.cache.getList(ctx, q, objMap, dest, opts)
+		if err == nil {
+			if err == redis.Nil {
+				// we have this list in the cache so just return it now; dest should already be filled out
+				return nil
+			}
+			return err
+		}
+	}
+
 	// get the cache key namme
 	keyName := q.getKeyName(objMap)
 
-	// get the cache value
-	// the obj should be of the value that the cache is expecting so we can then just unmarshal into that
-	ints := []int32{}
-	err = s.cache.LRange(ctx, keyName, int64(opts.Offset), int64(opts.Limit)).ScanSlice(&ints)
-	// LRange doens't throw err when key doesn't exist for some fucking reason (TODO: check with s.cache.Exists())
-	if err == nil && len(ints) > 0 {
+	exists, err := s.cache.Exists(ctx, keyName).Result()
+	if err != nil {
+		return err
+	}
+
+	if exists == 1 {
+		// get the cache value
+		// the obj should be of the value that the cache is expecting so we can then just unmarshal into that
+		ints := []int32{}
+		err = s.cache.LRange(ctx, keyName, int64(opts.Offset), int64(opts.Limit)).ScanSlice(&ints)
+		if err != nil {
+			return err
+		}
+
+		g, ctx := errgroup.WithContext(ctx)
+
+		d("found data in LRange; values: %+v", ints)
 
 		res := []map[string]interface{}{}
 		for _, i := range ints {
@@ -103,117 +126,122 @@ func (s *storage) selectAll(ctx context.Context, obj interface{}, dest interface
 			// set the CachePrimaryQueryStored's primary_key field to i
 			row[s.queryToTable[q.CachePrimaryQueryStored].PrimaryKeyField] = i // set the primary key's value
 
-			// only fetch row from database if it's required
 			if opts.FetchAll {
-				err = s.Select(ctx, &row, q.CachePrimaryQueryStored)
-				if err != nil {
-					return err
+				if s.disableConcurrency {
+					d("fetching without concurrency")
+					err = s.selectOne(ctx, &row, q.CachePrimaryQueryStored, conn)
+					if err != nil {
+						return err
+					}
+				} else {
+					d("fetching with concurrency")
+					g.Go(func() error {
+						return s.selectOne(ctx, &row, q.CachePrimaryQueryStored, conn)
+					})
 				}
 			}
-
 			res = append(res, row)
 		}
 
+		g.Wait()
+		d("returning data (unmarshalled): %+v")
 		// put the res into the dest (type of []interface to dest's type)
-		return mapsToStruct(res, dest)
-	}
 
-	// check to see if there's a real error
-	if err != nil && err != redis.Nil {
-		return err
+		if opts.FetchAll {
+			s.cache.setList(q, objMap, res, opts)
+		}
+		return mapsToStruct(res, dest)
+
 	}
 
 	// todo: validate limit and offset fields are not set before setting the keys
 
 	// we have an err and it's a redis.Nil which means the value wasn't found in the cache
 	// let's get from the database and then set the cache
-	objs, err := s.query(ctx, objMap, q, conn)
+	objs, err := s.db.query(ctx, objMap, q.Query, conn)
 	if len(objs) == 0 {
+		d("error: %+v", sql.ErrNoRows)
 		return sql.ErrNoRows
 	}
 	if err != nil {
+		d("error: %+v", err)
 		return err
 	}
 
+	d("updating cache")
 	// update the cache
 	err = s.cacheActionSelect(objMap, objs, s.queries[query])
 	if err != nil {
+		d("error: %+v", err)
 		return err
 	}
 
+	d("about to selectAll recursively\nObj: %+v\ndest: %+v", obj, dest)
+
 	// this is dangerous...
-	return s.SelectAll(ctx, obj, dest, query, opts)
+	return s.selectAll(ctx, obj, dest, query, opts, conn)
 }
 
-func (s *storage) insert(ctx context.Context, objMap *map[string]interface{}, conn InsertInterface) error {
-	return s.insertOrUpdate(ctx, objMap, conn)
-}
-
-func (s *storage) update(ctx context.Context, objMap *map[string]interface{}, conn InsertInterface) error {
-	return s.insertOrUpdate(ctx, objMap, conn)
-}
-
-// delete takes action on all the keys and referenced keys associated with this object
-func (s *storage) delete(ctx context.Context, obj map[string]interface{}) error {
-	return s.actionNonSelect(obj, actionDelete)
-}
-
-func (s *storage) insertOrUpdate(ctx context.Context, objMap *map[string]interface{}, conn InsertInterface) error {
+func (s *storage) insert(ctx context.Context, objMap map[string]interface{}, conn InsertInterface) (map[string]interface{}, error) {
 	// get the struct's string name to get config key
-	structName := (*objMap)[objMapStructNameKey].(string)
+	structName := objMap[objMapStructNameKey].(string)
 	if structName == "" {
-		return errors.New("struct name cannot be blank")
+		return nil, errors.New("struct name cannot be blank")
 	}
 
 	// get config key
 	table, ok := s.structToTable[structName]
 	if !ok {
-		return errors.New("no config key found for " + structName)
+		return nil, errors.New("no config key found for " + structName)
 	}
 
-	// cool, now let's make the actual insert
-	rows, err := conn.NamedQuery(table.InsertQuery.Query, *objMap)
-	if err != nil {
-		return err
-	}
-	defer rows.Close()
-
-	// all inserts & updates should have returning * thus we can just use the obj to scan into
-	// there should only be one row but still do rows.Next()
-
-	for rows.Next() {
-		err = rows.MapScan(*objMap)
-		if err != nil {
-			return err
-		}
-	}
-
-	return nil
-}
-
-// QUERY SHOULD BE SELECT BUT GOLANG IS A FUCKING BITCH AND WON'T LET ME USE THAT RESERVED KEYWORD AS A FUNCTION NAME EVEN THOUGH IT'S ON TOP OF A STRUCT
-func (s *storage) query(ctx context.Context, objMap map[string]interface{}, query *Query, conn InsertInterface) ([]map[string]interface{}, error) {
-	// let's now execute the query
-	rows, err := conn.NamedQuery(query.Query, objMap)
+	// TODO: set objMap
+	res, err := s.db.query(ctx, objMap, table.InsertQuery, conn)
 	if err != nil {
 		return nil, err
 	}
-	// Let's make sure we don't have a memory leak!! :)
-	defer rows.Close()
 
-	objs := []map[string]interface{}{}
-
-	for rows.Next() {
-		row := map[string]interface{}{}
-		err = rows.MapScan(row)
-		if err != nil {
-			return nil, err
-		}
-
-		// set the struct name
-		row[objMapStructNameKey] = objMap[objMapStructNameKey]
-		objs = append(objs, row)
+	if len(res) != 1 {
+		return nil, errors.New("insert did not return a single row; returned: " + fmt.Sprintf("%d", len(res)))
 	}
 
-	return objs, nil
+	// objMap probably has stuff we need, such as private keys, so we'll just overwrite the fields we have and return objMap
+	for k, v := range res[0] {
+		objMap[k] = v
+	}
+	return objMap, nil
+}
+
+func (s *storage) update(ctx context.Context, objMap map[string]interface{}, conn InsertInterface) (map[string]interface{}, error) {
+	// get the struct's string name to get config key
+	structName := objMap[objMapStructNameKey].(string)
+	if structName == "" {
+		return nil, errors.New("struct name cannot be blank")
+	}
+
+	// get config key
+	table, ok := s.structToTable[structName]
+	if !ok {
+		return nil, errors.New("no config key found for " + structName)
+	}
+
+	res, err := s.db.query(ctx, objMap, table.UpdateQuery, conn)
+	if err != nil {
+		return nil, err
+	}
+
+	if len(res) != 1 {
+		return nil, errors.New("update did not return a single row; returned: " + fmt.Sprintf("%d", len(res)))
+	}
+
+	// objMap probably has stuff we need, such as private keys, so we'll just overwrite the fields we have and return objMap
+	for k, v := range res[0] {
+		objMap[k] = v
+	}
+	return objMap, nil
+}
+
+// delete takes action on all the keys and referenced keys associated with this object
+func (s *storage) delete(ctx context.Context, obj map[string]interface{}) error {
+	return s.actionNonSelect(obj, actionDelete)
 }

@@ -33,7 +33,7 @@ type TxInterface interface {
 
 func (s *storage) TXBegin(ctx context.Context) (TxInterface, error) {
 
-	tx, err := s.writeConn.BeginTxx(ctx, nil)
+	tx, err := s.db.writeConn().BeginTxx(ctx, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -50,7 +50,9 @@ func (t *Tx) TXInsert(ctx context.Context, obj interface{}) error {
 	if err != nil {
 		return err
 	}
-	err = t.s.insert(ctx, &objMap, t.tx)
+
+	// set the objMap to the return value
+	objMap, err = t.s.insert(ctx, objMap, t.tx)
 	if err != nil {
 		return err
 	}
@@ -68,7 +70,9 @@ func (t *Tx) TXUpdate(ctx context.Context, obj interface{}) error {
 	if err != nil {
 		return err
 	}
-	err = t.s.update(ctx, &objMap, t.tx)
+
+	// set the objMap to the return value
+	objMap, err = t.s.update(ctx, objMap, t.tx)
 	if err != nil {
 		return err
 	}

@@ -40,9 +40,11 @@ type Storage interface {
 
 // storage is the private implements the API
 type storage struct {
-	readConn  *sqlx.DB
-	writeConn *sqlx.DB
-	cache     *cache
+	cache              *cache
+	db                 *db
+	debugger           bool
+	doNotUseCache      bool
+	disableConcurrency bool
 
 	/*
 		queries is used to *GET* a query from the query.Name
@@ -69,11 +71,13 @@ type storage struct {
 }
 
 type Config struct {
-	ReadOnlyDbConn  *sqlx.DB
-	WriteOnlyDbConn *sqlx.DB
-	Redis           *redis.Client
-	Tables          []*Table
-	DoNotUseCache   bool // make sure defaults to bool
+	ReadOnlyDbConn     *sqlx.DB
+	WriteOnlyDbConn    *sqlx.DB
+	Redis              *redis.Client
+	Tables             []*Table
+	Debugger           bool // turn on / off the debugger
+	DoNotUseCache      bool // make sure defaults to bool
+	DisableConcurrency bool // used to disable concurrency for testing
 }
 
 // New returns group which implements the interface
@@ -84,19 +88,32 @@ func New(conf *Config) (Storage, error) {
 	conf.ReadOnlyDbConn.Mapper = reflectx.NewMapperFunc("json", strings.ToLower)
 	conf.WriteOnlyDbConn.Mapper = reflectx.NewMapperFunc("json", strings.ToLower)
 
+	// first, set debug up so that we don't get a nil pointer err
+	debug = &logger{
+		debuggerEnabled: conf.Debugger,
+	}
+
 	s := &storage{
-		readConn:      conf.ReadOnlyDbConn,
-		writeConn:     conf.WriteOnlyDbConn,
-		cache:         newCache(conf.Redis),
-		queries:       make(map[int32]*Query),
-		queryToStruct: make(map[int32]string),
-		structToTable: make(map[string]*Table),
-		queryToTable:  make(map[int32]*Table),
-		queryToMap:    make(map[int32]map[string]interface{}),
+		cache:              newCache(conf.Redis),
+		db:                 newDB(conf),
+		queries:            make(map[int32]*Query),
+		queryToStruct:      make(map[int32]string),
+		structToTable:      make(map[string]*Table),
+		queryToTable:       make(map[int32]*Table),
+		queryToMap:         make(map[int32]map[string]interface{}),
+		debugger:           conf.Debugger,
+		doNotUseCache:      conf.DoNotUseCache,
+		disableConcurrency: conf.DisableConcurrency,
 	}
 
 	// TODO: validate cache keys
 	for _, t := range conf.Tables {
+
+		err := t.validateInsertAndUpdateQueries()
+		if err != nil {
+			return nil, err
+		}
+
 		structName := getStructName(t.Struct)
 
 		// first add the key to keys & keysToStruct
@@ -118,6 +135,9 @@ func New(conf *Config) (Storage, error) {
 				return nil, fmt.Errorf("error parsing cache fields for %s: %s", query.CacheKey, err)
 			}
 
+			// set the cache's cacheListKey
+			query.parseCacheListKey()
+
 			structMap[objMapStructPrimaryKey] = t.PrimaryKeyField
 
 			s.queryToMap[query.Name] = structMap
@@ -135,11 +155,17 @@ func New(conf *Config) (Storage, error) {
 }
 
 func (s *storage) Update(ctx context.Context, obj interface{}) error {
+	debug.init(ctx)
+	defer debug.clean()
+	d("Update() with obj: %+v", obj)
+
 	objMap, err := structToMap(obj)
 	if err != nil {
 		return err
 	}
-	err = s.update(ctx, &objMap, s.writeConn)
+
+	// set objMap to the return value
+	objMap, err = s.update(ctx, objMap, s.db.writeConn())
 	if err != nil {
 		return err
 	}
@@ -153,11 +179,17 @@ func (s *storage) Update(ctx context.Context, obj interface{}) error {
 }
 
 func (s *storage) Insert(ctx context.Context, obj interface{}) error {
+	debug.init(ctx)
+	defer debug.clean()
+	d("Insert() with obj: %+v", obj)
+
 	objMap, err := structToMap(obj)
 	if err != nil {
 		return err
 	}
-	err = s.insert(ctx, &objMap, s.writeConn)
+
+	// set objMap to the return value
+	objMap, err = s.insert(ctx, objMap, s.db.writeConn())
 	if err != nil {
 		return err
 	}
@@ -171,10 +203,17 @@ func (s *storage) Insert(ctx context.Context, obj interface{}) error {
 }
 
 func (s *storage) Clear(ctx context.Context, serviceName string) error {
+	debug.init(ctx)
+	defer debug.clean()
+	d("Clear called for service: %s", serviceName)
 	return nil
 }
 
 func (s *storage) DeleteKeys(ctx context.Context, objs ...interface{}) error {
+	debug.init(ctx)
+	defer debug.clean()
+	d("DeleteKeys() called")
+
 	// really should chain together errors and keep deleting even if an error occurs
 	for _, obj := range objs {
 		objMap, err := structToMap(obj)
@@ -190,9 +229,17 @@ func (s *storage) DeleteKeys(ctx context.Context, objs ...interface{}) error {
 }
 
 func (s *storage) Select(ctx context.Context, obj interface{}, query int32) error {
-	return s.selectOne(ctx, obj, query, s.readConn)
+	debug.init(ctx)
+	defer debug.clean()
+	d("Select() with obj: %+v, query: %d", obj, query)
+
+	return s.selectOne(ctx, obj, query, s.db.readConn())
 }
 
 func (s *storage) SelectAll(ctx context.Context, obj interface{}, dest interface{}, query int32, opts *SelectOptions) error {
-	return s.selectAll(ctx, obj, dest, query, opts, s.readConn)
+	debug.init(ctx)
+	defer debug.clean()
+	d("SelectAll() with obj: %+v, query: %d, opts: %+v", obj, query, opts)
+
+	return s.selectAll(ctx, obj, dest, query, opts, s.db.readConn())
 }

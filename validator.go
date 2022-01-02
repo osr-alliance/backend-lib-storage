@@ -5,6 +5,15 @@ import (
 	"strings"
 )
 
+/*
+func (q *Query) validateTTL(defaultTTL int) {
+	if q.CacheTTL == nil {
+		q.CacheTTL = &defaultTTL
+	}
+}
+*/
+
+// parseCacheFields takes in a generic key e.g. `service:leads|leads|lead_id:%v` and places the lead_id into the cacheKeyFields
 func (q *Query) parseCacheFields() error {
 
 	q.cacheKeyFields = []string{}
@@ -43,6 +52,7 @@ func (q *Query) parseCacheFields() error {
 	return nil
 }
 
+// parseCacheDataStructure parses the Insert, Select, and Update actions and sets the cacheDataStructure based off of the actions
 func (q *Query) parseCacheDatastructure() error {
 	m := map[string]CacheDataStructure{}
 
@@ -96,6 +106,7 @@ func (q *Query) parseCacheDatastructure() error {
 	return nil
 }
 
+// validatePrimaryQueryStored makes sure that the key in CachePrimaryQueryStored is actually a query that queries based off primary key
 func (s *storage) validatePrimaryQueryStored() error {
 
 	for _, q := range s.queries {
@@ -117,4 +128,31 @@ func (s *storage) validatePrimaryQueryStored() error {
 		}
 	}
 	return nil
+}
+
+func (t *Table) validateInsertAndUpdateQueries() error {
+	if t.InsertQuery == "" {
+		return errors.New("InsertQuery must be set")
+	}
+
+	// you can potentially have an update query, but it's not required
+
+	if !strings.HasSuffix(strings.ToLower(t.InsertQuery), "returning *") {
+		return errors.New("InsertQuery must end with `returning *`")
+	}
+
+	if !strings.HasSuffix(strings.ToLower(t.UpdateQuery), "returning *") && t.UpdateQuery != "" {
+		return errors.New("UpdateQuery must end with `returning *`")
+	}
+	return nil
+}
+
+func (q *Query) parseCacheListKey() {
+	if q.cacheDataStructure != CacheDataStructureList {
+		return
+	}
+
+	q.cacheListKey = q.CacheKey + cacheKeyListModifier
+
+	q.cacheListMetadataKey = q.CacheKey + cacheKeyListMetadataModifier
 }
