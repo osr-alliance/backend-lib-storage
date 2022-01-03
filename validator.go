@@ -131,13 +131,9 @@ func (s *storage) validatePrimaryQueryStored() error {
 }
 
 func (t *Table) validateInsertAndUpdateQueries() error {
-	if t.InsertQuery == "" {
-		return errors.New("InsertQuery must be set")
-	}
+	// insert query & update query shouldn't be required e.g. UserIsAuthorized doens't have an insert or update
 
-	// you can potentially have an update query, but it's not required
-
-	if !strings.HasSuffix(strings.ToLower(t.InsertQuery), "returning *") {
+	if !strings.HasSuffix(strings.ToLower(t.InsertQuery), "returning *") && t.InsertQuery != "" {
 		return errors.New("InsertQuery must end with `returning *`")
 	}
 
