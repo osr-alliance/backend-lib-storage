@@ -30,6 +30,7 @@ func (c *cache) get(ctx context.Context, key string, value interface{}) error {
 
 func (c *cache) set(ctx context.Context, key string, value interface{}, expiration int) error {
 	str, err := json.Marshal(value)
+	d("set() key: %s\n value: %+v\n", key, string(str))
 	if err != nil {
 		return err
 	}

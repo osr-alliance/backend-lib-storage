@@ -23,6 +23,7 @@ func newDB(conf *Config) *db {
 }
 
 func (db *db) query(ctx context.Context, objMap map[string]interface{}, query string, conn InsertInterface) ([]map[string]interface{}, error) {
+	d("query: %s\nobjs: %+v\n", query, objMap)
 	// let's now execute the query
 	rows, err := conn.NamedQuery(query, objMap)
 	if err != nil {
