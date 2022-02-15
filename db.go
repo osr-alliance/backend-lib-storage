@@ -2,12 +2,13 @@ package storage
 
 import (
 	"context"
+	"database/sql"
 
 	"github.com/jmoiron/sqlx"
 )
 
 type InsertInterface interface {
-	NamedQuery(query string, arg interface{}) (*sqlx.Rows, error)
+	NamedQuery(queryName string, arg interface{}) (*sqlx.Rows, error)
 }
 
 type db struct {
@@ -22,10 +23,10 @@ func newDB(conf *Config) *db {
 	}
 }
 
-func (db *db) query(ctx context.Context, objMap map[string]interface{}, query string, conn InsertInterface) ([]map[string]interface{}, error) {
-	d("query: %s\nobjs: %+v\n", query, objMap)
+func (db *db) query(ctx context.Context, objMap map[string]interface{}, queryName string, conn InsertInterface) ([]map[string]interface{}, error) {
+	d("queryName: %s\nobjs: %+v\n", queryName, objMap)
 	// let's now execute the query
-	rows, err := conn.NamedQuery(query, objMap)
+	rows, err := conn.NamedQuery(queryName, objMap)
 	if err != nil {
 		return nil, err
 	}
@@ -44,6 +45,10 @@ func (db *db) query(ctx context.Context, objMap map[string]interface{}, query st
 		// set the struct name
 		row[objMapStructNameKey] = objMap[objMapStructNameKey]
 		objs = append(objs, row)
+	}
+
+	if len(objs) == 0 {
+		return nil, sql.ErrNoRows
 	}
 
 	return objs, nil

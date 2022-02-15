@@ -2,7 +2,6 @@ package storage
 
 import (
 	"context"
-	"fmt"
 
 	"github.com/jmoiron/sqlx"
 )
@@ -27,10 +26,10 @@ type TxInterface interface {
 	Rollback(ctx context.Context) error
 
 	// Select is for fetching one row where obj will be the result
-	Select(ctx context.Context, obj interface{}, key int32) error // Select fills out the obj for its response
+	Select(ctx context.Context, obj interface{}, key string) error // Select fills out the obj for its response
 
 	// SelectAll is for fetching all rows where objs will be the results
-	SelectAll(ctx context.Context, obj interface{}, objs interface{}, key int32, opts *SelectOptions) error
+	SelectAll(ctx context.Context, obj interface{}, objs interface{}, key string, opts *SelectOptions) error
 }
 
 func (s *storage) TXBegin(ctx context.Context) (TxInterface, error) {
@@ -86,11 +85,11 @@ func (t *Tx) Update(ctx context.Context, obj interface{}) error {
 	return mapToStruct(objMap, obj)
 }
 
-func (t *Tx) Select(ctx context.Context, obj interface{}, key int32) error {
+func (t *Tx) Select(ctx context.Context, obj interface{}, key string) error {
 	return t.s.selectOne(ctx, obj, key, t.tx)
 }
 
-func (t *Tx) SelectAll(ctx context.Context, obj interface{}, objs interface{}, key int32, opts *SelectOptions) error {
+func (t *Tx) SelectAll(ctx context.Context, obj interface{}, objs interface{}, key string, opts *SelectOptions) error {
 	return t.s.selectAll(ctx, obj, objs, key, opts, t.tx)
 }
 
@@ -108,7 +107,7 @@ func (t *Tx) End(ctx context.Context) error {
 		err = t.s.actionNonSelect(action.obj, action.action)
 		if err != nil {
 			// do we realy want to return an error here? Or finish the tx and return an error?
-			fmt.Println(err)
+			return err
 		}
 	}
 

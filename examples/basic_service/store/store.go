@@ -40,6 +40,7 @@ func New(conf *Config) Store {
 		Redis:           conf.Redis,
 		Tables:          tables,
 		Debugger:        true,
+		ServiceName:     "basic_service",
 	}
 
 	s, err := storage.New(c)

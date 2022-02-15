@@ -4,7 +4,7 @@ import storage "github.com/osr-alliance/backend-lib-storage"
 
 var leadsGetByID = &storage.Query{
 	Name:     LeadsGetByID,
-	CacheKey: "service:basic_service|leads|lead_id:%v",
+	CacheKey: "lead_id=%v",
 
 	Query: "select * from leads where lead_id=:lead_id",
 
@@ -17,10 +17,10 @@ var leadsGetByID = &storage.Query{
 
 var leadsGetByUserID = &storage.Query{
 	Name:                    LeadsGetByUserID,
-	CacheKey:                "service:basic_service|leads|user_id:%v",
+	CacheKey:                "user_id=%v|email!=asdf@asdf.com",
 	CachePrimaryQueryStored: LeadsGetByID,
 
-	Query: "select * from leads where user_id=:user_id",
+	Query: "select * from leads where user_id=:user_id and email!='asdf@asdf.com'",
 
 	CacheTTL: DefaultTTL,
 

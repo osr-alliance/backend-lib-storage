@@ -4,18 +4,15 @@ import storage "github.com/osr-alliance/backend-lib-storage"
 
 // define all the query names we will use
 const (
-	// always start with Default at 0 position
-	Default int32 = iota
-
 	/*
 		It's standard to have the query used to fetch by
 		the primary key be called {tableName}GetByID
 
 		In this case, it's LeadsGetByID
 	*/
-	LeadsGetByID
-	LeadsGetByUserID
-	LeadsUpdateNameByID
+	LeadsGetByID        = "LeadsGetByID"
+	LeadsGetByUserID    = "LeadsGetByUserID"
+	LeadsUpdateNameByID = "LeadsUpdateNameByID"
 )
 
 const (

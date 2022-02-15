@@ -37,6 +37,13 @@ func (s *storage) actionNonSelect(objMap map[string]interface{}, action actionTy
 
 	var err error
 	for _, q := range table.Queries {
+
+		// check to see if all the cache's fields are what they're supposed to be
+		// e.g. check to make sure if there's a != then the column's values don't match
+		if !q.isValidQuery(objMap) {
+			continue
+		}
+
 		var actionToTake CacheAction
 		switch action {
 		case actionInsert:
@@ -128,6 +135,8 @@ func (s *storage) cacheActionSelect(objMap map[string]interface{}, objs []map[st
 
 	var err error
 	keyName := query.getKeyName(objMap)
+
+	d("keyName IN THIS BITCH: %s\nobjMap: %+v", keyName, objMap)
 
 	switch query.SelectAction {
 	case CacheNoAction:

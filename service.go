@@ -20,6 +20,18 @@ func structToMap(obj interface{}) (map[string]interface{}, error) {
 	return m, json.Unmarshal(j, &m)
 }
 
+func structToMapWithOptions(obj interface{}, opts *SelectOptions) (map[string]interface{}, error) {
+	objMap, err := structToMap(obj)
+	if err != nil {
+		return nil, err
+	}
+
+	objMap["limit"] = opts.Limit
+	objMap["offset"] = opts.Offset
+
+	return objMap, nil
+}
+
 // mapToStruct converts a map to a struct
 func mapToStruct(m map[string]interface{}, s interface{}) error {
 	j, err := json.Marshal(m)

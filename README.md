@@ -107,10 +107,13 @@ The reason why this is the case vs. having a key are a few:
 
 Please see `examples/basic_service` first. It has a detailed readme thankfully (yep, I actually made documentation)
 
-## TODO
-1. Support cache clusters (I have to look if this is already supported actually. This might already be enabled)
-2. More validation checks during both runtime and during initialization. Off the top of my head:
+## TODO (in no particular order)
+- Support cache clusters (I have to look if this is already supported actually. This might already be enabled)
+- REFACTOR SelectAll (note: there's a race condition when doing LPush & potential inserts too. This would be where someone selects all, it's not in cache, gets from DB, someone else does insert or someone else does a selectall, and then there's an invalidation. **Need to fix this badly**)
+- Cache type of increment
+- Allow for = validators to equal a sepicific value e.g. `role=OWNER`
+- More validation checks during both runtime and during initialization. Off the top of my head:
     1. Make sure that no TTL is 0. Nothing should be cached permanently
-3. Unit tests / fuzzy testing would be nice...
-4. Lists should support sub-lists e.g. instead of a primary key stored, it should actually support a key that's a list in & of itself. This is **incredibly** useful for doing analytics where you can kinda do caching based off a lego system. Basically if you're trying to do something like an average number of chats per day over a month then you can think of that as an avg of avg's on a daily basis. Then the day is built of an avg of hours, which is an avg of minutes. Then the it builds up to the end-query (which eventually gets stored in its own right due to the metadata list). I **think** this is innately supported through the idea of referencedKeys too so if you have ListA which is comprised of ListB's and listB has an insert then with reference keys it should still update listA. I think. Gotta think that through if we run into it but timeseries and analytics aren't really high on our priority list (much like this whole library wasn't on our priority list but I made it, lmfao)
-5. Integration directly into sqlx / somehow move raw bytes directly from postgres to Redis automatically. That will save tons of Reflection for json transformations
+- Unit tests / fuzzy testing would be nice...
+- Lists should support sub-lists e.g. instead of a primary key stored, it should actually support a key that's a list in & of itself. This is **incredibly** useful for doing analytics where you can kinda do caching based off a lego system. Basically if you're trying to do something like an average number of chats per day over a month then you can think of that as an avg of avg's on a daily basis. Then the day is built of an avg of hours, which is an avg of minutes. Then the it builds up to the end-query (which eventually gets stored in its own right due to the metadata list). I **think** this is innately supported through the idea of referencedKeys too so if you have ListA which is comprised of ListB's and listB has an insert then with reference keys it should still update listA. I think. Gotta think that through if we run into it but timeseries and analytics aren't really high on our priority list (much like this whole library wasn't on our priority list but I made it, lmfao)
+- Integration directly into sqlx / somehow move raw bytes directly from postgres to Redis automatically. That will save tons of Reflection for json transformations

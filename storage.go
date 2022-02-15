@@ -2,7 +2,6 @@ package storage
 
 import (
 	"context"
-	"fmt"
 	"strings"
 
 	"github.com/go-redis/redis/v8"
@@ -22,7 +21,7 @@ type Storage interface {
 
 	Insert(ctx context.Context, obj interface{}) error
 	Update(ctx context.Context, obj interface{}) error
-	Select(ctx context.Context, obj interface{}, key int32) error // Select fills out the obj for its response
+	Select(ctx context.Context, obj interface{}, key string) error // Select fills out the obj for its response
 
 	/*
 		SelectAll fills out the objs as the response
@@ -30,7 +29,7 @@ type Storage interface {
 		developer-friendly way because then you'd have to type-cast and check the objs being returned. Much easier to do it this
 		way from a developer's standpoint
 	*/
-	SelectAll(ctx context.Context, obj interface{}, objs interface{}, key int32, opts *SelectOptions) error
+	SelectAll(ctx context.Context, obj interface{}, objs interface{}, key string, opts *SelectOptions) error
 
 	DeleteKeys(ctx context.Context, objs ...interface{}) error // Deletes the object's keys from the cache
 
@@ -50,24 +49,29 @@ type storage struct {
 		queries is used to *GET* a query from the query.Name
 		This is a map to the query.Name -> query
 	*/
-	queries map[int32]*Query
+	queries map[string]*Query
 
 	/*
 		This is a map of query.Name -> table.Struct's name
 	*/
-	queryToStruct map[int32]string
+	queryToStruct map[string]string
 
 	/*
 		queryToMap takes the query.Name and returns the empty map with the keys that are needed for the query's struct
 	*/
-	queryToMap map[int32]map[string]interface{}
+	queryToMap map[string]map[string]interface{}
 
 	/*
 		This is a map of the Table.Struct's name -> Table
 	*/
 	structToTable map[string]*Table // maps struct to the insert key
 
-	queryToTable map[int32]*Table // maps query to the table
+	queryToTable map[string]*Table // maps query to the table
+
+	// serviceName is the name of the service that is being used
+	serviceName string
+
+	defaultTTL int
 }
 
 type Config struct {
@@ -75,9 +79,11 @@ type Config struct {
 	WriteOnlyDbConn    *sqlx.DB
 	Redis              *redis.Client
 	Tables             []*Table
+	ServiceName        string
 	Debugger           bool // turn on / off the debugger
 	DoNotUseCache      bool // make sure defaults to bool
 	DisableConcurrency bool // used to disable concurrency for testing
+	DefaultTTL         int  // if 0 then it defaults to packages
 }
 
 // New returns group which implements the interface
@@ -96,62 +102,64 @@ func New(conf *Config) (Storage, error) {
 	s := &storage{
 		cache:              newCache(conf.Redis),
 		db:                 newDB(conf),
-		queries:            make(map[int32]*Query),
-		queryToStruct:      make(map[int32]string),
-		structToTable:      make(map[string]*Table),
-		queryToTable:       make(map[int32]*Table),
-		queryToMap:         make(map[int32]map[string]interface{}),
 		debugger:           conf.Debugger,
 		doNotUseCache:      conf.DoNotUseCache,
 		disableConcurrency: conf.DisableConcurrency,
 	}
 
+	s.queries = make(map[string]*Query)
+	s.queryToStruct = make(map[string]string)
+	s.structToTable = make(map[string]*Table)
+	s.queryToTable = make(map[string]*Table)
+	s.queryToMap = make(map[string]map[string]interface{})
+	s.serviceName = conf.ServiceName
+
+	if conf.DefaultTTL == 0 {
+		s.defaultTTL = (24 * 60 * 60 * 7) // 7 days
+	}
+
 	// TODO: validate cache keys
 	for _, t := range conf.Tables {
 
-		err := t.validateInsertAndUpdateQueries()
+		// validate the table & its configuration
+		err := t.validate()
 		if err != nil {
 			return nil, err
 		}
 
-		structName := getStructName(t.Struct)
+		// sets all the private values for the struct
+		t.parse()
+
+		tableName := t.objMap[objMapStructNameKey].(string)
 
 		// first add the key to keys & keysToStruct
 		for _, query := range t.Queries {
-			structMap, err := structToMap(t.Struct)
+
+			err = query.validate()
 			if err != nil {
-				return nil, fmt.Errorf("error getting struct map for %s: %s", structName, err)
+				return nil, err
 			}
 
-			// validate and set the cacheDataStructure
-			err = query.parseCacheDatastructure()
-			if err != nil {
-				return nil, fmt.Errorf("error parsing cache datastructure for %s: %s", query.CacheKey, err)
-			}
-
-			// validate and set the cacheFields
-			err = query.parseCacheFields()
-			if err != nil {
-				return nil, fmt.Errorf("error parsing cache fields for %s: %s", query.CacheKey, err)
-			}
-
-			// set the cache's cacheListKey
+			query.parseLimitOffsetQuery()
+			query.parseCacheListKey()
+			query.parseTableName(tableName)
+			query.parseFullCacheKey(s.serviceName, tableName)
+			query.parseTTL(s.defaultTTL)
 			query.parseCacheListKey()
 
-			structMap[objMapStructPrimaryKey] = t.PrimaryKeyField
-
-			s.queryToMap[query.Name] = structMap
-
+			s.queryToMap[query.Name] = t.objMap
 			s.queries[query.Name] = query
-			s.queryToStruct[query.Name] = structName
+			s.queryToStruct[query.Name] = tableName
 			s.queryToTable[query.Name] = t
 		}
 
 		// then add the configKey to the structToTable
-		s.structToTable[structName] = t
+		s.structToTable[tableName] = t
 	}
 
-	return s, s.validatePrimaryQueryStored()
+	err := s.validate()
+
+	return s, err
 }
 
 func (s *storage) Update(ctx context.Context, obj interface{}) error {
@@ -228,18 +236,18 @@ func (s *storage) DeleteKeys(ctx context.Context, objs ...interface{}) error {
 	return nil
 }
 
-func (s *storage) Select(ctx context.Context, obj interface{}, query int32) error {
+func (s *storage) Select(ctx context.Context, obj interface{}, queryName string) error {
 	debug.init(ctx)
 	defer debug.clean()
-	d("Select() with obj: %+v, query: %d", obj, query)
+	d("Select() with obj: %+v, queryName: %d", obj, queryName)
 
-	return s.selectOne(ctx, obj, query, s.db.readConn())
+	return s.selectOne(ctx, obj, queryName, s.db.readConn())
 }
 
-func (s *storage) SelectAll(ctx context.Context, obj interface{}, dest interface{}, query int32, opts *SelectOptions) error {
+func (s *storage) SelectAll(ctx context.Context, obj interface{}, dest interface{}, queryName string, opts *SelectOptions) error {
 	debug.init(ctx)
 	defer debug.clean()
-	d("SelectAll() with obj: %+v, query: %d, opts: %+v", obj, query, opts)
+	d("SelectAll() with obj: %+v, queryName: %d, opts: %+v", obj, queryName, opts)
 
-	return s.selectAll(ctx, obj, dest, query, opts, s.db.readConn())
+	return s.selectAll(ctx, obj, dest, queryName, opts, s.db.readConn())
 }

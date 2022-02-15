@@ -2,7 +2,6 @@ package storage
 
 import (
 	"context"
-	"database/sql"
 	"errors"
 	"fmt"
 	"reflect"
@@ -11,13 +10,13 @@ import (
 	"golang.org/x/sync/errgroup"
 )
 
-func (s *storage) selectOne(ctx context.Context, obj interface{}, query int32, conn InsertInterface) error {
+func (s *storage) selectOne(ctx context.Context, obj interface{}, queryName string, conn InsertInterface) error {
 	v := reflect.ValueOf(obj)
 	if v.Kind() != reflect.Ptr {
 		return fmt.Errorf("obj not pointer; is %T", obj)
 	}
 
-	q, ok := s.queries[query]
+	q, ok := s.queries[queryName]
 	if !ok {
 		return errors.New("config query not found; have you configured storage properly?")
 	}
@@ -46,10 +45,7 @@ func (s *storage) selectOne(ctx context.Context, obj interface{}, query int32, c
 
 	// we have an err and it's a redis.Nil which means the value wasn't found in the cache
 	// let's get from the database and then set the cache
-	res, err := s.db.query(ctx, objMap, q.Query, conn)
-	if err == nil && len(res) == 0 {
-		return sql.ErrNoRows
-	}
+	res, err := s.db.query(ctx, objMap, q.getQuery(objMap), conn)
 	if err != nil {
 		return err
 	}
@@ -58,7 +54,7 @@ func (s *storage) selectOne(ctx context.Context, obj interface{}, query int32, c
 	}
 
 	// update the cache
-	err = s.cacheActionSelect(objMap, res, s.queries[query])
+	err = s.cacheActionSelect(objMap, res, s.queries[queryName])
 	if err != nil {
 		return err
 	}
@@ -66,23 +62,28 @@ func (s *storage) selectOne(ctx context.Context, obj interface{}, query int32, c
 	return mapToStruct(res[0], obj)
 }
 
-func (s *storage) selectAll(ctx context.Context, obj interface{}, dest interface{}, query int32, opts *SelectOptions, conn InsertInterface) error {
+func (s *storage) selectAll(ctx context.Context, obj interface{}, dest interface{}, queryName string, opts *SelectOptions, conn InsertInterface) error {
 	v := reflect.ValueOf(dest)
 	if v.Kind() != reflect.Ptr {
 		return fmt.Errorf("dest not pointer; is %T", dest)
 	}
 
-	q, ok := s.queries[query]
-	if !ok {
-		return errors.New("table config not found; have you configured storage properly?")
-	}
-
-	objMap, err := structToMap(obj)
+	err := opts.validateAndParse()
 	if err != nil {
 		return err
 	}
 
-	if opts.FetchAll {
+	q, ok := s.queries[queryName]
+	if !ok {
+		return errors.New("table config not found; have you configured storage properly?")
+	}
+
+	objMap, err := structToMapWithOptions(obj, opts)
+	if err != nil {
+		return err
+	}
+
+	if opts.FetchAllData {
 		err = s.cache.getList(ctx, q, objMap, dest, opts)
 		if err == nil {
 			if err == redis.Nil {
@@ -105,7 +106,7 @@ func (s *storage) selectAll(ctx context.Context, obj interface{}, dest interface
 		// get the cache value
 		// the obj should be of the value that the cache is expecting so we can then just unmarshal into that
 		ints := []int32{}
-		err = s.cache.LRange(ctx, keyName, int64(opts.Offset), int64(opts.Limit)).ScanSlice(&ints)
+		err = s.cache.LRange(ctx, keyName, int64(opts.Offset), int64(opts.cacheLimit)).ScanSlice(&ints)
 		if err != nil {
 			return err
 		}
@@ -126,7 +127,7 @@ func (s *storage) selectAll(ctx context.Context, obj interface{}, dest interface
 			// set the CachePrimaryQueryStored's primary_key field to i
 			row[s.queryToTable[q.CachePrimaryQueryStored].PrimaryKeyField] = i // set the primary key's value
 
-			if opts.FetchAll {
+			if opts.FetchAllData {
 				if s.disableConcurrency {
 					d("fetching without concurrency")
 					err = s.selectOne(ctx, &row, q.CachePrimaryQueryStored, conn)
@@ -147,30 +148,29 @@ func (s *storage) selectAll(ctx context.Context, obj interface{}, dest interface
 		d("returning data (unmarshalled): %+v")
 		// put the res into the dest (type of []interface to dest's type)
 
-		if opts.FetchAll {
+		if opts.FetchAllData {
 			s.cache.setList(q, objMap, res, opts)
 		}
 		return mapsToStruct(res, dest)
 
 	}
 
-	// todo: validate limit and offset fields are not set before setting the keys
+	// shouldn't have err here since we've already checked above
+	objMap, _ = structToMap(obj)
 
 	// we have an err and it's a redis.Nil which means the value wasn't found in the cache
 	// let's get from the database and then set the cache
-	objs, err := s.db.query(ctx, objMap, q.Query, conn)
-	if len(objs) == 0 {
-		d("error: %+v", sql.ErrNoRows)
-		return sql.ErrNoRows
-	}
+	objs, err := s.db.query(ctx, objMap, q.getQuery(objMap), conn)
 	if err != nil {
 		d("error: %+v", err)
 		return err
 	}
 
+	d("returning data (unmarshalled): %+v", objs)
+
 	d("updating cache")
 	// update the cache
-	err = s.cacheActionSelect(objMap, objs, s.queries[query])
+	err = s.cacheActionSelect(objMap, objs, s.queries[queryName])
 	if err != nil {
 		d("error: %+v", err)
 		return err
@@ -179,7 +179,7 @@ func (s *storage) selectAll(ctx context.Context, obj interface{}, dest interface
 	d("about to selectAll recursively\nObj: %+v\ndest: %+v", obj, dest)
 
 	// this is dangerous...
-	return s.selectAll(ctx, obj, dest, query, opts, conn)
+	return s.selectAll(ctx, obj, dest, queryName, opts, conn)
 }
 
 func (s *storage) insert(ctx context.Context, objMap map[string]interface{}, conn InsertInterface) (map[string]interface{}, error) {

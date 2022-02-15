@@ -20,13 +20,14 @@ func (s *store) GetLeadByID(ctx context.Context, id int32) (*Leads, error) {
 func (s *store) GetLeadsByUserID(ctx context.Context, id int32) ([]Leads, error) {
 	l := &Leads{
 		UserID: id,
+		Email:  "ssss@asdf.com",
 	}
 
 	leads := []Leads{}
 	err := s.store.SelectAll(ctx, l, &leads, LeadsGetByUserID, &storage.SelectOptions{
-		Limit:    -1,
-		Offset:   0,
-		FetchAll: true,
+		Limit:        0,
+		Offset:       0,
+		FetchAllData: true,
 	})
 
 	return leads, err
