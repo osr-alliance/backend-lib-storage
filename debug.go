@@ -2,6 +2,7 @@ package storage
 
 import (
 	"context"
+	"fmt"
 
 	"github.com/sirupsen/logrus"
 )
@@ -9,6 +10,11 @@ import (
 var debug *logger
 
 func d(s string, args ...interface{}) {
+	if debug == nil {
+		fmt.Println("debugger not initialized")
+		return
+	}
+	//fmt.Printf(s, args...)
 	debug.debug(s, args...)
 }
 

@@ -83,13 +83,21 @@ func (s *storage) selectAll(ctx context.Context, obj interface{}, dest interface
 		return err
 	}
 
+	// there's no action to take on select so just do the query and return
+	if q.SelectAction == CacheNoAction {
+		objs, err := s.db.query(ctx, objMap, q.getQuery(objMap), conn)
+		if err != nil {
+			d("error: %+v", err)
+			return err
+		}
+
+		return mapsToStruct(objs, dest)
+	}
+
 	if opts.FetchAllData {
 		err = s.cache.getList(ctx, q, objMap, dest, opts)
-		if err == nil {
-			if err == redis.Nil {
-				// we have this list in the cache so just return it now; dest should already be filled out
-				return nil
-			}
+		// return if there is a real err. If it's redis.Nil then just keep moving forward
+		if err != nil && err != redis.Nil {
 			return err
 		}
 	}

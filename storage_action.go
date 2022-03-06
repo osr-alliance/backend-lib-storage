@@ -136,7 +136,7 @@ func (s *storage) cacheActionSelect(objMap map[string]interface{}, objs []map[st
 	var err error
 	keyName := query.getKeyName(objMap)
 
-	d("keyName IN THIS BITCH: %s\nobjMap: %+v", keyName, objMap)
+	d("keyName: %s", keyName)
 
 	switch query.SelectAction {
 	case CacheNoAction:

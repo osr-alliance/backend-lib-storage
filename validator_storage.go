@@ -49,6 +49,9 @@ func (s *storage) validatePrimaryQueryStored() error {
 func (s *storage) validateQueries() error {
 
 	for _, q := range s.queries {
+		if q.InsertAction == CacheNoAction && q.UpdateAction == CacheNoAction && q.SelectAction == CacheNoAction {
+			continue
+		}
 
 		m := s.queryToMap[q.Name]
 		m["limit"] = 0

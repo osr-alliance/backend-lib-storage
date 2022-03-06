@@ -108,6 +108,7 @@ The reason why this is the case vs. having a key are a few:
 Please see `examples/basic_service` first. It has a detailed readme thankfully (yep, I actually made documentation)
 
 ## TODO (in no particular order)
+- Debugger needs to be re-written becuase it will interfere w/ other requests coming in. Since it's global, if multiple requests come in at the same time it'll cause issues
 - Support cache clusters (I have to look if this is already supported actually. This might already be enabled)
 - REFACTOR SelectAll (note: there's a race condition when doing LPush & potential inserts too. This would be where someone selects all, it's not in cache, gets from DB, someone else does insert or someone else does a selectall, and then there's an invalidation. **Need to fix this badly**)
 - Cache type of increment
