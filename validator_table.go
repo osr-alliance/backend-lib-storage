@@ -101,6 +101,11 @@ func (t *Table) parseSlicesInQueries() error {
 
 			// should probably be a little bit better but it's assuming it's a slice so it's ({parameter})
 			if strings.Contains(q.Query, fmt.Sprintf("(:%s)", slice)) {
+				// must have no action on the cache when using IN in a query because you'll get cache invalidation errors
+				if q.InsertAction != CacheNoAction || q.UpdateAction != CacheNoAction || q.SelectAction != CacheNoAction {
+					return fmt.Errorf("storage: %s must use CacheNoAction when using IN in your query", q.Name)
+				}
+
 				if q.slicesInQuery == nil {
 					q.slicesInQuery = map[string]reflect.Type{}
 				}
