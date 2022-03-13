@@ -2,6 +2,8 @@ package storage
 
 import (
 	"fmt"
+	"reflect"
+	"strings"
 )
 
 type actionTypes int32
@@ -56,7 +58,11 @@ type Query struct {
 
 	Query            string // sql query if key isn't in cache e.g. `select * from leads where lead_id=:lead_id`
 	queryLimitOffset string // Query but with limit & offset set in the query
-	tableName        string // the table name that this query is for; added for optimization purposes
+	// Names of the parameters that are slices in the query
+	// e.g. `select * from users where user_id in (:user_ids)` so :user_ids would be placed here
+	slicesInQuery map[string]reflect.Type
+
+	tableName string // the table name that this query is for; added for optimization purposes
 
 	/*
 		CacheKey defines the associated key name in the cache.
@@ -87,9 +93,8 @@ type Query struct {
 			`service:group|relation_groups_users|user_id:%v|group_id:%v|relation_type:MODERATOR`
 		-
 	*/
-	CacheKey          string
-	fullCacheKey      string // adds the service name & table name to the beginning of the cache key
-	formattedCacheKey string // formats the cache key based off table & service name
+	CacheKey     string
+	fullCacheKey string // adds the service name & table name to the beginning of the cache key
 
 	cacheKeyFields                    []cacheKeyField // tags of the db fields for the key e.g. if key is `lead_id=%v` then the fields would be []string{"lead_id"}
 	cacheKeyContainsNotEqualsOperator bool            // if the key contains a `!=` operator
@@ -161,17 +166,45 @@ func (q *Query) getKeyNameMetadata(objMap map[string]interface{}) string {
 }
 
 func (q *Query) getQuery(objMap map[string]interface{}) string {
-	limit, ok := objMap["limit"]
-	if !ok {
-		// limit isn't here thus return Query
+	query := func() string {
+		limit, ok := objMap["limit"]
+		if !ok {
+			// limit isn't here thus return Query
+			return q.Query
+		}
+
+		// if the limit is > 0 for a list then return the queryLimitOffset
+		if q.cacheDataStructure == CacheDataStructureList && limit.(int32) > 0 {
+			return q.queryLimitOffset
+		}
 		return q.Query
+	}()
+
+	if len(q.slicesInQuery) != 0 {
+		for parameter, sliceType := range q.slicesInQuery {
+			parameterValue := ""
+			switch sliceType {
+			case reflect.TypeOf([]string{}):
+				ss := []string{}
+				for _, value := range objMap[parameter].([]interface{}) {
+					ss = append(ss, value.(string))
+				}
+				parameterValue = fmt.Sprintf("'%s'", strings.Join(ss, "', '"))
+			default:
+				// if it's not a string then all the ints automatically get converted to int64
+				is := []float64{}
+				for _, value := range objMap[parameter].([]interface{}) {
+					is = append(is, value.(float64))
+				}
+				parameterValue = strings.Join(strings.Split(fmt.Sprint(is), " "), ", ")
+				parameterValue = strings.Replace(parameterValue, "[", "", -1)
+				parameterValue = strings.Replace(parameterValue, "]", "", -1)
+			}
+			query = strings.Replace(query, fmt.Sprintf(":%s", parameter), parameterValue, -1)
+		}
 	}
 
-	// if the limit is > 0 for a list then return the queryLimitOffset
-	if q.cacheDataStructure == CacheDataStructureList && limit.(int32) > 0 {
-		return q.queryLimitOffset
-	}
-	return q.Query
+	return query
 }
 
 func (q *Query) isValidQuery(objMap map[string]interface{}) bool {
