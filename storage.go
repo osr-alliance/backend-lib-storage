@@ -155,6 +155,8 @@ func New(conf *Config) (Storage, error) {
 
 		// then add the configKey to the structToTable
 		s.structToTable[tableName] = t
+
+		t.validateAndParseObjMap()
 	}
 
 	err := s.validate()

@@ -3,6 +3,7 @@ package storage
 import (
 	"errors"
 	"fmt"
+	"reflect"
 	"strings"
 )
 
@@ -31,7 +32,12 @@ func (t *Table) validate() error {
 		return err
 	}
 
-	return t.validateAndParseObjMap()
+	err = t.validateAndParseObjMap()
+	if err != nil {
+		return err
+	}
+
+	return t.parseSlicesInQueries()
 }
 
 func (t *Table) parse() {
@@ -66,4 +72,59 @@ func (t *Table) validateInsertAndUpdateQueries() error {
 func (t *Table) parseTableName() {
 	// optimization but this is used so many times that it's worth it given it uses reflection
 	t.tableName = getStructName(t.Struct)
+}
+
+// parseSlicesInSqlQuery takes in a query and parses out the slices in the query for use in the IN clause in postgres
+func (t *Table) parseSlicesInQueries() error {
+	if t.objMap == nil {
+		return errors.New("storage: objMap must not be nil before parsing slices in queries")
+	}
+
+	val := reflect.Indirect(reflect.ValueOf(t.Struct))
+	// get all the slices in the objMap
+	slices := map[string]reflect.Type{}
+
+	for i := 0; i < val.Type().NumField(); i++ {
+		field := val.Type().Field(i)
+
+		if field.Type.Kind() == reflect.Slice {
+			s := strings.Split(field.Tag.Get("json"), ",") // in case there are options like omitempty
+			slices[s[0]] = field.Type
+		}
+	}
+
+	slicesUsed := map[string]reflect.Type{}
+	// check if any of the queries have a named parameter in the query that's also in the slices
+	for _, q := range t.Queries {
+		// get all the named parameter slices
+		for slice := range slices {
+
+			// should probably be a little bit better but it's assuming it's a slice so it's ({parameter})
+			if strings.Contains(q.Query, fmt.Sprintf("(:%s)", slice)) {
+				if q.slicesInQuery == nil {
+					q.slicesInQuery = map[string]reflect.Type{}
+				}
+				q.slicesInQuery[slice] = slices[slice]
+				slicesUsed[slice] = slices[slice]
+			}
+		}
+	}
+
+	// validate the slices used in the queries
+	for slice, k := range slicesUsed {
+		// check to make sure they're of the correct type
+		// check to make sure the slice is of the proper type
+		switch k.String() {
+		case "[]string":
+		case "[]int":
+		case "[]int32":
+		case "[]int64":
+		case "[]float32":
+		case "[]float64":
+		default:
+			return fmt.Errorf("cannot have slice %s of type %s in a query", slice, k.String())
+		}
+	}
+
+	return nil
 }
