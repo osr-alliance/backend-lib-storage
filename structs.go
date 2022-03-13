@@ -165,7 +165,7 @@ func (q *Query) getKeyNameMetadata(objMap map[string]interface{}) string {
 	return fmt.Sprintf(q.fullCacheKey+"|"+q.cacheListMetadataKey, args...)
 }
 
-func (q *Query) getQuery(objMap map[string]interface{}) string {
+func (q *Query) getQuery(objMap map[string]interface{}) (string, error) {
 	query := func() string {
 		limit, ok := objMap["limit"]
 		if !ok {
@@ -185,18 +185,30 @@ func (q *Query) getQuery(objMap map[string]interface{}) string {
 			parameterValue := ""
 			switch sliceType {
 			case reflect.TypeOf([]string{}):
-				ss := []string{}
-				for _, value := range objMap[parameter].([]interface{}) {
-					ss = append(ss, value.(string))
+				// check if slice is nil
+				v, ok := objMap[parameter].([]interface{})
+				if !ok {
+					return "", fmt.Errorf("%v cannot be nil", parameter)
 				}
-				parameterValue = fmt.Sprintf("'%s'", strings.Join(ss, "', '"))
+
+				inStrings := []string{}
+				for _, value := range v {
+					inStrings = append(inStrings, value.(string))
+				}
+				parameterValue = fmt.Sprintf("'%s'", strings.Join(inStrings, "', '"))
 			default:
-				// if it's not a string then all the ints automatically get converted to int64
-				is := []float64{}
-				for _, value := range objMap[parameter].([]interface{}) {
-					is = append(is, value.(float64))
+				// check if slice is nil
+				v, ok := objMap[parameter].([]interface{})
+				if !ok {
+					return "", fmt.Errorf("%v cannot be nil", parameter)
 				}
-				parameterValue = strings.Join(strings.Split(fmt.Sprint(is), " "), ", ")
+
+				// if it's not a string then all the ints automatically get converted to int64
+				inNumbers := []float64{}
+				for _, value := range v {
+					inNumbers = append(inNumbers, value.(float64))
+				}
+				parameterValue = strings.Join(strings.Split(fmt.Sprint(inNumbers), " "), ", ")
 				parameterValue = strings.Replace(parameterValue, "[", "", -1)
 				parameterValue = strings.Replace(parameterValue, "]", "", -1)
 			}
@@ -204,7 +216,7 @@ func (q *Query) getQuery(objMap map[string]interface{}) string {
 		}
 	}
 
-	return query
+	return query, nil
 }
 
 func (q *Query) isValidQuery(objMap map[string]interface{}) bool {

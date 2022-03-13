@@ -43,9 +43,14 @@ func (s *storage) selectOne(ctx context.Context, obj interface{}, queryName stri
 		return err
 	}
 
+	dbQuery, err := q.getQuery(objMap)
+	if err != nil {
+		return err
+	}
+
 	// we have an err and it's a redis.Nil which means the value wasn't found in the cache
 	// let's get from the database and then set the cache
-	res, err := s.db.query(ctx, objMap, q.getQuery(objMap), conn)
+	res, err := s.db.query(ctx, objMap, dbQuery, conn)
 	if err != nil {
 		return err
 	}
@@ -83,9 +88,14 @@ func (s *storage) selectAll(ctx context.Context, obj interface{}, dest interface
 		return err
 	}
 
+	dbQuery, err := q.getQuery(objMap)
+	if err != nil {
+		return err
+	}
+
 	// there's no action to take on select so just do the query and return
 	if q.SelectAction == CacheNoAction {
-		objs, err := s.db.query(ctx, objMap, q.getQuery(objMap), conn)
+		objs, err := s.db.query(ctx, objMap, dbQuery, conn)
 		if err != nil {
 			d("error: %+v", err)
 			return err
@@ -166,9 +176,14 @@ func (s *storage) selectAll(ctx context.Context, obj interface{}, dest interface
 	// shouldn't have err here since we've already checked above
 	objMap, _ = structToMap(obj)
 
+	dbQuery, err = q.getQuery(objMap)
+	if err != nil {
+		return err
+	}
+
 	// we have an err and it's a redis.Nil which means the value wasn't found in the cache
 	// let's get from the database and then set the cache
-	objs, err := s.db.query(ctx, objMap, q.getQuery(objMap), conn)
+	objs, err := s.db.query(ctx, objMap, dbQuery, conn)
 	if err != nil {
 		d("error: %+v", err)
 		return err
