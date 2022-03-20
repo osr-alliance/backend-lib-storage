@@ -81,7 +81,7 @@ type storage struct {
 type Config struct {
 	ReadOnlyDbConn     *sqlx.DB
 	WriteOnlyDbConn    *sqlx.DB
-	Redis              *redis.Client
+	Redis              *redis.ClusterClient
 	Tables             []*Table
 	ServiceName        string
 	Debugger           bool // turn on / off the debugger

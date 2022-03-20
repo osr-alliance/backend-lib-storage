@@ -9,10 +9,10 @@ import (
 )
 
 type cache struct {
-	*redis.Client
+	*redis.ClusterClient
 }
 
-func newCache(conn *redis.Client) *cache {
+func newCache(conn *redis.ClusterClient) *cache {
 	return &cache{
 		conn,
 	}

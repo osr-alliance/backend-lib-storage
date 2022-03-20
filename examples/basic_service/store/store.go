@@ -16,7 +16,7 @@ type Store interface {
 }
 
 type store struct {
-	redis *redis.Client // note: it's completely acceptable to have a redis client in the store
+	redis *redis.ClusterClient // note: it's completely acceptable to have a redis client in the store
 	db    *sqlx.DB
 	store storage.Storage
 }
@@ -24,7 +24,7 @@ type store struct {
 type Config struct {
 	ReadConn  *sqlx.DB
 	WriteConn *sqlx.DB
-	Redis     *redis.Client
+	Redis     *redis.ClusterClient
 	Tables    []*storage.Table
 }
 

@@ -7,6 +7,7 @@ import (
 	"log"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/go-redis/redis/v8"
@@ -57,7 +58,7 @@ func main() {
 	log.Fatal(srv.ListenAndServe())
 }
 
-func createConns() (*sqlx.DB, *sqlx.DB, *redis.Client) {
+func createConns() (*sqlx.DB, *sqlx.DB, *redis.ClusterClient) {
 	// set logrus log level to debug
 	logrus.SetLevel(logrus.DebugLevel)
 
@@ -73,10 +74,8 @@ func createConns() (*sqlx.DB, *sqlx.DB, *redis.Client) {
 		panic("dbConn is nil")
 	}
 
-	rdb := redis.NewClient(&redis.Options{
-		Addr:     fmt.Sprintf("%s:%s", REDISHOST, REDISPORT),
-		Password: REDISPASS, // no password set
-		DB:       0,         // use default DB
+	rdb := redis.NewClusterClient(&redis.ClusterOptions{
+		Addrs: strings.Split("localhost:6379", ","),
 	})
 	if rdb == nil {
 		log.Fatal("unable to connect to redis")
@@ -88,7 +87,7 @@ func createConns() (*sqlx.DB, *sqlx.DB, *redis.Client) {
 type Config struct {
 	writeConn *sqlx.DB
 	readConn  *sqlx.DB
-	redis     *redis.Client
+	redis     *redis.ClusterClient
 }
 
 type lead struct {
