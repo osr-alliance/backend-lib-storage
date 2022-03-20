@@ -2,6 +2,7 @@ package storage
 
 import (
 	"context"
+	"errors"
 	"strings"
 
 	"github.com/go-redis/redis/v8"
@@ -32,6 +33,9 @@ type Storage interface {
 	SelectAll(ctx context.Context, obj interface{}, objs interface{}, key string, opts *SelectOptions) error
 
 	DeleteKeys(ctx context.Context, objs ...interface{}) error // Deletes the object's keys from the cache
+
+	// gets the key's formatted name
+	KeyName(key string, obj interface{}) (string, error)
 
 	// clear's out all of this service's stuff such as during a migration
 	Clear(ctx context.Context, serviceName string) error
@@ -162,6 +166,20 @@ func New(conf *Config) (Storage, error) {
 	err := s.validate()
 
 	return s, err
+}
+
+func (s *storage) KeyName(key string, obj interface{}) (string, error) {
+	objMap, err := structToMap(obj)
+	if err != nil {
+		return "", err
+	}
+
+	q, ok := s.queries[key]
+	if !ok {
+		return "", errors.New("table config not found; have you configured storage properly?")
+	}
+
+	return q.getKeyName(objMap), nil
 }
 
 func (s *storage) Update(ctx context.Context, obj interface{}) error {
