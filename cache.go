@@ -38,8 +38,12 @@ func (c *cache) set(ctx context.Context, key string, value interface{}, expirati
 	return c.Set(ctx, key, str, time.Duration(expiration)*time.Second).Err()
 }
 
-func (c *cache) getList(ctx context.Context, q *Query, objMap map[string]interface{}, dest interface{}, opts *SelectOptions) error {
-	d("getList")
+/*
+	getCachedSelectAll takes a selectAll query & options and caches the response so that when doing a selectAll it can return the data instantly
+	vs. having to go through all the primary keys and fetch from the database
+*/
+func (c *cache) getCachedSelectAll(ctx context.Context, q *Query, objMap map[string]interface{}, dest interface{}, opts *SelectOptions) error {
+	d("getMetadataList")
 	keyName := q.getKeyNameSelectOpts(objMap, opts)
 	keyNameMetadata := q.getKeyNameMetadata(objMap)
 
@@ -63,13 +67,13 @@ func (c *cache) getList(ctx context.Context, q *Query, objMap map[string]interfa
 	d("getList() doing setList check")
 	go func() {
 		// new ctx so we don't have any cancellations
-		c.setList(q, objMap, dest, opts)
+		c.setCachedSelectAll(q, objMap, dest, opts)
 	}()
 	return nil
 }
 
 // setList updates the list's metadata to make sure it's up to date. This is idempotent
-func (c *cache) setList(q *Query, objMap map[string]interface{}, dest interface{}, opts *SelectOptions) error {
+func (c *cache) setCachedSelectAll(q *Query, objMap map[string]interface{}, dest interface{}, opts *SelectOptions) error {
 	ctx := context.Background()
 
 	d("setList")
@@ -104,7 +108,7 @@ func (c *cache) setList(q *Query, objMap map[string]interface{}, dest interface{
 	return err
 }
 
-func (c *cache) updateList(q *Query, objMap map[string]interface{}) error {
+func (c *cache) updateCachedSelectAll(q *Query, objMap map[string]interface{}) error {
 	d("updateList")
 	// As Logan says: deleting the key is never the wrong move.
 	ctx := context.Background()

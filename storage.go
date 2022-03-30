@@ -3,6 +3,7 @@ package storage
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 
 	"github.com/go-redis/redis/v8"
@@ -210,6 +211,8 @@ func (s *storage) Insert(ctx context.Context, obj interface{}) error {
 	debug.init(ctx)
 	defer debug.clean()
 	d("Insert() with obj: %+v", obj)
+
+	fmt.Println("heerrree...?")
 
 	objMap, err := structToMap(obj)
 	if err != nil {

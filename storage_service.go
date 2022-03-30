@@ -105,7 +105,7 @@ func (s *storage) selectAll(ctx context.Context, obj interface{}, dest interface
 	}
 
 	if opts.FetchAllData {
-		err = s.cache.getList(ctx, q, objMap, dest, opts)
+		err = s.cache.getCachedSelectAll(ctx, q, objMap, dest, opts)
 		// return if there is a real err. If it's redis.Nil then just keep moving forward
 		if err != nil && err != redis.Nil {
 			return err
@@ -167,7 +167,7 @@ func (s *storage) selectAll(ctx context.Context, obj interface{}, dest interface
 		// put the res into the dest (type of []interface to dest's type)
 
 		if opts.FetchAllData {
-			s.cache.setList(q, objMap, res, opts)
+			s.cache.setCachedSelectAll(q, objMap, res, opts)
 		}
 		return mapsToStruct(res, dest)
 

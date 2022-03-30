@@ -165,6 +165,10 @@ func (q *Query) getKeyNameMetadata(objMap map[string]interface{}) string {
 	return fmt.Sprintf(q.fullCacheKey+"|"+q.cacheListMetadataKey, args...)
 }
 
+/*
+getQuery returns the sql query for the cache key. It will return based off if there is a limit / offset in the options
+as well as if the query has any IN operators in the sql statement then it'll fill those fields out
+*/
 func (q *Query) getQuery(objMap map[string]interface{}) (string, error) {
 	query := func() string {
 		limit, ok := objMap["limit"]
