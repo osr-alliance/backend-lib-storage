@@ -39,8 +39,6 @@ func (s *storage) actionNonSelect(objMap map[string]interface{}, action actionTy
 	var err error
 	for _, q := range append(table.Queries, table.ReferencedQueries...) {
 
-		fmt.Println("query is: ", q.Name)
-
 		// check to see if all the cache's fields are what they're supposed to be
 		// e.g. check to make sure if there's a != then the column's values don't match
 		if !q.isValidQuery(objMap) {

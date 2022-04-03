@@ -83,17 +83,17 @@ This is why when doing a storage.SelectAll, the options parameter has a FetchAll
 
 In this way, we can keep the cache up to date during updates & inserts
 
-### <ins>Cached List Results</ins>
+### <ins>Cached SelectAll Results</ins>
 
 There's an issue that you might see pretty quickly: when we want to query a lot of something via SelectAll and FetchAll in the options is true then we're going through a ton of keys potentially. This could actually slow down the results relative to just doing a query. So why not just cache the whole result based off the limit & offset? And that's exactly what we do.
 
-Every time SelectAll is called with FetchAll = true then we cache the full results as a struct so that the next time it's called it actually returns that full info vs. having to go through the list & fetch piece-meal all the data & returning.
+Every time SelectAll is called with FetchAll = true then we cache the full results as json so that the next time it's called it actually returns that full info vs. having to go through the list & fetch piece-meal all the data & returning.
 
 Every list has two internal keys:
-1. a key for using offset & limit (e.g. there'd be a `leads|groups:14|offset:%v|limit%v`)
-2. a `metadata` key (e.g. there'd be a `leads|group_id:14|metadata` list)
+1. a key for using offset & limit (e.g. there'd be a `leads|groups:14|offset:%v|limit%v`) which caches the full results of the query
+2. a key to store a list of key names (e.g. there'd be a `leads|group_id:14|list_cached_selectAll` list that would store #1's)
 
-The offsetLimit key is set with the full results if we're fetching all the data as a struct. It's then placed into the `metadata` list so that when there's an action that affects this key (e.g. an update or insert) then the cache can go to the `metadata` key and delete everything so that query is no longer cached. Boom.
+The offsetLimit key is set with the full results if we're fetching all the data as a struct. It's then placed into the `list_cached_selectAll` list so that when there's an action that affects this key (e.g. an update or insert) then the cache can go to the `list_cached_selectAll` key and delete everything so that query is no longer cached. Boom.
 
 ### <ins>Updates</ins>
 
@@ -118,5 +118,5 @@ Please see `examples/basic_service` first. It has a detailed readme thankfully (
 - More validation checks during both runtime and during initialization. Off the top of my head:
     1. Make sure that no TTL is 0. Nothing should be cached permanently
 - Unit tests / fuzzy testing would be nice...
-- Lists should support sub-lists e.g. instead of a primary key stored, it should actually support a key that's a list in & of itself. This is **incredibly** useful for doing analytics where you can kinda do caching based off a lego system. Basically if you're trying to do something like an average number of chats per day over a month then you can think of that as an avg of avg's on a daily basis. Then the day is built of an avg of hours, which is an avg of minutes. Then the it builds up to the end-query (which eventually gets stored in its own right due to the metadata list). I **think** this is innately supported through the idea of referencedKeys too so if you have ListA which is comprised of ListB's and listB has an insert then with reference keys it should still update listA. I think. Gotta think that through if we run into it but timeseries and analytics aren't really high on our priority list (much like this whole library wasn't on our priority list but I made it, lmfao)
+- Lists should support sub-lists e.g. instead of a primary key stored, it should actually support a key that's a list in & of itself. This is **incredibly** useful for doing analytics where you can kinda do caching based off a lego system. Basically if you're trying to do something like an average number of chats per day over a month then you can think of that as an avg of avg's on a daily basis. Then the day is built of an avg of hours, which is an avg of minutes. Then the it builds up to the end-query (which eventually gets stored in its own right due to the cachedSelectAll list). I **think** this is innately supported through the idea of referencedKeys too so if you have ListA which is comprised of ListB's and listB has an insert then with reference keys it should still update listA. I think. Gotta think that through if we run into it but timeseries and analytics aren't really high on our priority list (much like this whole library wasn't on our priority list but I made it, lmfao)
 - Integration directly into sqlx / somehow move raw bytes directly from postgres to Redis automatically. That will save tons of Reflection for json transformations

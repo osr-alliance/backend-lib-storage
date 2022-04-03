@@ -25,9 +25,9 @@ func (q *Query) parseCacheListKey() {
 		return
 	}
 
-	q.cacheListKey = q.CacheKey + cacheKeyListModifier
+	q.cacheListKey = q.CacheKey + cacheKeyCachedSelectAllModifier
 
-	q.cacheListMetadataKey = q.CacheKey + cacheKeyListMetadataModifier
+	q.cacheListCachedSelectAllKey = q.CacheKey + cacheKeyListCachedSelectAll
 }
 
 func (q *Query) parseTableName(tableName string) {

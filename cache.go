@@ -43,15 +43,15 @@ func (c *cache) set(ctx context.Context, key string, value interface{}, expirati
 	vs. having to go through all the primary keys and fetch from the database
 */
 func (c *cache) getCachedSelectAll(ctx context.Context, q *Query, objMap map[string]interface{}, dest interface{}, opts *SelectOptions) error {
-	d("getMetadataList")
+	d("getCachedSelectAll")
 	keyName := q.getKeyNameSelectOpts(objMap, opts)
-	keyNameMetadata := q.getKeyNameMetadata(objMap)
+	keyNameCachedSelectAll := q.getKeyNameCachedSelectAll(objMap)
 
 	/*
-		There's an invalidation issue where if the metadata key gets deleted (expired) then this key might be out of date as well.
-		Check to see if the metadata key exists first and if not then throw a redis.Nil
+		There's an invalidation issue where if the cached selectAll key gets deleted (expired) then this key might be out of date as well.
+		Check to see if the cached selectAll key exists first and if not then throw a redis.Nil
 	*/
-	exists, err := c.Exists(ctx, keyNameMetadata).Result()
+	exists, err := c.Exists(ctx, keyNameCachedSelectAll).Result()
 	if err != nil {
 		return err
 	}
@@ -72,37 +72,37 @@ func (c *cache) getCachedSelectAll(ctx context.Context, q *Query, objMap map[str
 	return nil
 }
 
-// setList updates the list's metadata to make sure it's up to date. This is idempotent
+// setCachedSelectAll updates the list of selectAll queries that are cached to make sure it's up to date. This is idempotent
 func (c *cache) setCachedSelectAll(q *Query, objMap map[string]interface{}, dest interface{}, opts *SelectOptions) error {
 	ctx := context.Background()
 
-	d("setList")
-	keyNameMetadata := q.getKeyNameMetadata(objMap)
+	d("setCachedSelectAll")
+	keyNameCachedSelectAll := q.getKeyNameCachedSelectAll(objMap)
 	keyName := q.getKeyNameSelectOpts(objMap, opts)
-	d("setList() keyNameMetadata: %s\n keyName: %s\n", keyNameMetadata, keyName)
+	d("setCachedSelectAll() keyNameCachedSelectAll: %s\n keyName: %s\n", keyNameCachedSelectAll, keyName)
 
 	// first and foremost, set the key. Note: if this is being called from getLists then setting this is ok because we update the TTL
 	c.set(ctx, keyName, dest, q.CacheTTL)
 
-	d("setList() checking if exists")
-	exists, err := c.Exists(ctx, keyNameMetadata).Result()
+	d("setCachedSelectAll() checking if exists")
+	exists, err := c.Exists(ctx, keyNameCachedSelectAll).Result()
 	if err != nil {
-		d("setList() error: %+v", err)
+		d("setCachedSelectAll() error: %+v", err)
 		return err
 	}
 
 	// if the key doesn't exist, we need to create it & just push
 	if exists == 0 {
-		d("setList() key doesn't exist, so we're going to create it and push")
-		return c.RPush(ctx, keyNameMetadata, keyName).Err()
+		d("setCachedSelectAll() key doesn't exist, so we're going to create it and push")
+		return c.RPush(ctx, keyNameCachedSelectAll, keyName).Err()
 	}
 
-	d("setList() key exists, so we're going to update it")
-	_, err = c.LPos(ctx, keyNameMetadata, keyName, redis.LPosArgs{}).Result()
+	d("setCachedSelectAll() key exists, so we're going to update it")
+	_, err = c.LPos(ctx, keyNameCachedSelectAll, keyName, redis.LPosArgs{}).Result()
 	if err != nil {
 		if err == redis.Nil {
-			d("setList() key doesn't exist in the metadata, so we're going to create it and push")
-			return c.RPush(ctx, keyNameMetadata, keyName).Err()
+			d("setCachedSelectAll() key doesn't exist in the cachedSelectAll key, so we're going to create it and push")
+			return c.RPush(ctx, keyNameCachedSelectAll, keyName).Err()
 		}
 	}
 	return err
@@ -112,7 +112,7 @@ func (c *cache) updateCachedSelectAll(q *Query, objMap map[string]interface{}) e
 	d("updateList")
 	// As Logan says: deleting the key is never the wrong move.
 	ctx := context.Background()
-	keyNameMeta := q.getKeyNameMetadata(objMap)
+	keyNameMeta := q.getKeyNameCachedSelectAll(objMap)
 	res, err := c.LRange(ctx, keyNameMeta, 0, -1).Result()
 	if err != nil {
 		return err

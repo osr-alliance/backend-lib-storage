@@ -19,8 +19,8 @@ const (
 	objMapStructNameKey    = "_structName"
 	objMapStructPrimaryKey = "_primaryKey"
 
-	cacheKeyListModifier         = "|offset:%v|limit:%v"
-	cacheKeyListMetadataModifier = "|metadata"
+	cacheKeyCachedSelectAllModifier = "|offset:%v|limit:%v"
+	cacheKeyListCachedSelectAll     = "|list_cached_selectAll"
 )
 
 // Define the cache actions you can take
@@ -73,8 +73,8 @@ type Query struct {
 		Example: `lead_id=%v` (for the leads table) or `group_id=%v|role!=OWNER` (for the relation_groups_users table)
 
 		NOTE:
-			- no key that has a list cache datastructure can end in `|metadata`
-			- no key that has a list cache datastructure can end in `|offset%v|limit%v`
+			- no key that has a list cache datastructure can end in cacheKeyListCachedSelectAll's value
+			- no key that has a list cache datastructure can end in cacheKeyCachedSelectAllModifier's value
 			- There are two operators: = and !=
 			- The = operator (e.g. `lead_id=%v`) is used for exact value matches from the column. If it is not matched then the key doesn't get a hit
 			- The != operator (e.g. `group_id=%v|role!=OWNER`) is used for non-exact value matches from the column. If it is matched then the key doesn't get a hit.
@@ -103,8 +103,7 @@ type Query struct {
 	CacheTTL           int                // time to live in seconds; 0 = default for the application; -1 = never expire
 	cacheDataStructure CacheDataStructure // data structure to use for cache e.g. if it's a single object (struct) or a list of id's
 
-	//cacheListKeys        []string           // cacheListKeys stores the keys associated with SelectAll calls where selectOpts is defined
-	cacheListMetadataKey string // cacheListMetadataKey is the key for the metadata associated with the list
+	cacheListCachedSelectAllKey string // cacheListCachedSelectAllKey is the key for the cached selectAll's associated with the list
 
 	/*
 		CachePrimaryKeyStored is the key that stores the data in a list (useful for tables that do joins)
@@ -153,7 +152,7 @@ func (q *Query) getKeyNameSelectOpts(objMap map[string]interface{}, opts *Select
 	return fmt.Sprintf(q.fullCacheKey+"|"+q.cacheListKey, args...)
 }
 
-func (q *Query) getKeyNameMetadata(objMap map[string]interface{}) string {
+func (q *Query) getKeyNameCachedSelectAll(objMap map[string]interface{}) string {
 	args := []interface{}{}
 	for _, field := range q.cacheKeyFields {
 		if field.operator == operatorNotEqual {
@@ -162,7 +161,7 @@ func (q *Query) getKeyNameMetadata(objMap map[string]interface{}) string {
 		args = append(args, objMap[field.columnName])
 	}
 
-	return fmt.Sprintf(q.fullCacheKey+"|"+q.cacheListMetadataKey, args...)
+	return fmt.Sprintf(q.fullCacheKey+"|"+q.cacheListCachedSelectAllKey, args...)
 }
 
 /*
